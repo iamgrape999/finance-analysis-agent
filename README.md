@@ -62,7 +62,7 @@ http://localhost:8000/api/health
   "use_history": true,
   "provider_order": "openrouter,gemini,cloudflare,groq,aws",
   "model_overrides": {
-    "openrouter": "openrouter/free",
+    "openrouter": "nvidia/nemotron-3-super-120b-a12b:free",
     "fireworks": "accounts/fireworks/models/deepseek-v3p1"
   }
 }
