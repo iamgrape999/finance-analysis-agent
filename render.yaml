@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: finance-analysis-agent
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: finance-agent-memory
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: MEMORY_ROOT
+        value: /var/data/memory
+      - key: AGENT_PROVIDER_ORDER
+        value: openrouter,fireworks,gemini,cloudflare,groq,aws
+      - key: DEBUG
+        value: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: FIREWORKS_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CF_API_TOKEN
+        sync: false
+      - key: CF_ACCOUNT_ID
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1

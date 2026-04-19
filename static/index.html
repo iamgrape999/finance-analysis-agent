@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Finance Analysis Agent</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Finance Analysis Agent</p>
+          <h1>法金 AI 對話工作台</h1>
+        </div>
+        <div id="status" class="status">檢查連線中</div>
+      </section>
+
+      <section class="workspace">
+        <aside class="settings">
+          <h2>設定</h2>
+          <label>
+            THREAD_ID
+            <input id="threadInput" type="text" />
+          </label>
+          <label>
+            Backend API URL
+            <input id="apiBaseInput" type="url" placeholder="同網域留空；GitHub Pages 填 Render URL" />
+          </label>
+          <label>
+            Provider 順序
+            <select id="providerOrderInput">
+              <option value="">自動</option>
+              <option value="openrouter,fireworks,gemini,cloudflare,groq,aws">openrouter 優先</option>
+              <option value="fireworks,openrouter,gemini,cloudflare,groq,aws">fireworks 優先</option>
+              <option value="gemini,openrouter,fireworks,cloudflare,groq,aws">gemini 優先</option>
+              <option value="cloudflare,openrouter,fireworks,gemini,groq,aws">cloudflare 優先</option>
+              <option value="groq,openrouter,fireworks,gemini,cloudflare,aws">groq 優先</option>
+            </select>
+          </label>
+          <label>
+            OpenRouter 模型
+            <select id="openrouterModelInput">
+              <option value="">使用 .env 預設</option>
+              <optgroup label="OpenRouter 免費模型：推理能力排序（高→低）">
+                <option value="openai/gpt-oss-120b:free">openai/gpt-oss-120b:free</option>
+                <option value="nvidia/nemotron-3-super-120b-a12b:free">nvidia/nemotron-3-super-120b-a12b:free</option>
+                <option value="arcee-ai/trinity-large-preview:free">arcee-ai/trinity-large-preview:free</option>
+                <option value="qwen/qwen3-coder:free">qwen/qwen3-coder:free</option>
+                <option value="qwen/qwen3-next-80b-a3b-instruct:free">qwen/qwen3-next-80b-a3b-instruct:free</option>
+                <option value="meta-llama/llama-3.3-70b-instruct:free">meta-llama/llama-3.3-70b-instruct:free</option>
+                <option value="z-ai/glm-4.5-air:free">z-ai/glm-4.5-air:free</option>
+                <option value="minimax/minimax-m2.5:free">minimax/minimax-m2.5:free</option>
+                <option value="google/gemma-4-31b-it:free">google/gemma-4-31b-it:free</option>
+                <option value="nvidia/nemotron-3-nano-30b-a3b:free">nvidia/nemotron-3-nano-30b-a3b:free</option>
+                <option value="google/gemma-4-26b-a4b-it:free">google/gemma-4-26b-a4b-it:free</option>
+                <option value="openai/gpt-oss-20b:free">openai/gpt-oss-20b:free</option>
+                <option value="nvidia/nemotron-nano-9b-v2:free">nvidia/nemotron-nano-9b-v2:free</option>
+                <option value="openrouter/elephant-alpha">openrouter/elephant-alpha（免費）</option>
+              </optgroup>
+              <optgroup label="OpenRouter 付費常用：推理能力排序（高→低）">
+                <option value="openai/gpt-4.1-mini">openai/gpt-4.1-mini</option>
+                <option value="meta-llama/llama-3.1-70b-instruct">meta-llama/llama-3.1-70b-instruct</option>
+                <option value="anthropic/claude-3.5-haiku">anthropic/claude-3.5-haiku</option>
+                <option value="openai/gpt-4o-mini">openai/gpt-4o-mini</option>
+                <option value="google/gemini-flash-1.5">google/gemini-flash-1.5</option>
+              </optgroup>
+              <optgroup label="OpenRouter 自動路由">
+                <option value="openrouter/free">openrouter/free（自動選免費模型）</option>
+              </optgroup>
+            </select>
+          </label>
+          <label>
+            Fireworks 模型
+            <select id="fireworksModelInput">
+              <option value="">使用 .env 預設；若 Fireworks 已連線會自動載入可用模型</option>
+            </select>
+          </label>
+          <label>
+            Gemini 模型
+            <select id="geminiModelInput">
+              <option value="">使用 .env 預設</option>
+              <optgroup label="Gemini 3">
+                <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
+                <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+              </optgroup>
+              <optgroup label="Gemini 2.5">
+                <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+                <option value="gemini-2.5-flash-preview-09-2025">gemini-2.5-flash-preview-09-2025</option>
+                <option value="gemini-2.5-flash-lite-preview-09-2025">gemini-2.5-flash-lite-preview-09-2025</option>
+              </optgroup>
+              <optgroup label="Gemini 2.0 / Legacy">
+              <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+              <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+              <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+              </optgroup>
+            </select>
+          </label>
+          <label>
+            Cloudflare 模型
+            <select id="cloudflareModelInput">
+              <option value="">使用 .env 預設</option>
+              <optgroup label="Cloudflare 常用文字生成：推理能力排序（高→低）">
+                <option value="@cf/openai/gpt-oss-120b">@cf/openai/gpt-oss-120b</option>
+                <option value="@cf/meta/llama-3.1-70b-instruct">@cf/meta/llama-3.1-70b-instruct</option>
+                <option value="@cf/meta/llama-4-scout-17b-16e-instruct">@cf/meta/llama-4-scout-17b-16e-instruct</option>
+                <option value="@cf/zai-org/glm-4.7-flash">@cf/zai-org/glm-4.7-flash</option>
+                <option value="@cf/qwen/qwen3-30b-a3b-fp8">@cf/qwen/qwen3-30b-a3b-fp8</option>
+                <option value="@cf/openai/gpt-oss-20b">@cf/openai/gpt-oss-20b</option>
+                <option value="@cf/meta/llama-3.1-8b-instruct">@cf/meta/llama-3.1-8b-instruct</option>
+              </optgroup>
+              <optgroup label="Cloudflare 舊版 / 相容選項（較低推理）">
+                <option value="@cf/mistral/mistral-7b-instruct-v0.2">@cf/mistral/mistral-7b-instruct-v0.2</option>
+              </optgroup>
+            </select>
+          </label>
+          <label>
+            Groq 模型
+            <select id="groqModelInput">
+              <option value="">使用 .env 預設</option>
+              <optgroup label="Groq Production Models：推理能力排序（高→低）">
+                <option value="openai/gpt-oss-120b">openai/gpt-oss-120b</option>
+                <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+                <option value="openai/gpt-oss-20b">openai/gpt-oss-20b</option>
+                <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
+              </optgroup>
+              <optgroup label="Groq Systems（工具/路由型，非純模型）">
+                <option value="groq/compound">groq/compound</option>
+                <option value="groq/compound-mini">groq/compound-mini</option>
+              </optgroup>
+              <optgroup label="Groq Legacy / Compatibility（較低推理）">
+                <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
+                <option value="gemma2-9b-it">gemma2-9b-it</option>
+              </optgroup>
+            </select>
+          </label>
+          <label>
+            AWS Bedrock 模型
+            <select id="awsModelInput">
+              <option value="">使用 .env 預設</option>
+              <optgroup label="Claude 4.6 / 最新">
+                <option value="anthropic.claude-sonnet-4-6">anthropic.claude-sonnet-4-6</option>
+                <option value="us.anthropic.claude-sonnet-4-6">us.anthropic.claude-sonnet-4-6</option>
+                <option value="global.anthropic.claude-sonnet-4-6">global.anthropic.claude-sonnet-4-6</option>
+                <option value="anthropic.claude-opus-4-6-v1">anthropic.claude-opus-4-6-v1</option>
+                <option value="us.anthropic.claude-opus-4-6-v1">us.anthropic.claude-opus-4-6-v1</option>
+                <option value="global.anthropic.claude-opus-4-6-v1">global.anthropic.claude-opus-4-6-v1</option>
+              </optgroup>
+              <optgroup label="Claude 4.5">
+                <option value="anthropic.claude-opus-4-5-20251101-v1:0">anthropic.claude-opus-4-5-20251101-v1:0</option>
+                <option value="us.anthropic.claude-opus-4-5-20251101-v1:0">us.anthropic.claude-opus-4-5-20251101-v1:0</option>
+                <option value="global.anthropic.claude-opus-4-5-20251101-v1:0">global.anthropic.claude-opus-4-5-20251101-v1:0</option>
+                <option value="anthropic.claude-sonnet-4-5-20250929-v1:0">anthropic.claude-sonnet-4-5-20250929-v1:0</option>
+                <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">us.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
+                <option value="global.anthropic.claude-sonnet-4-5-20250929-v1:0">global.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
+                <option value="anthropic.claude-haiku-4-5-20251001-v1:0">anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">us.anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                <option value="global.anthropic.claude-haiku-4-5-20251001-v1:0">global.anthropic.claude-haiku-4-5-20251001-v1:0</option>
+              </optgroup>
+              <optgroup label="Claude 3.x / 相容">
+              <option value="anthropic.claude-3-haiku-20240307-v1:0">anthropic.claude-3-haiku-20240307-v1:0</option>
+              <option value="anthropic.claude-3-5-haiku-20241022-v1:0">anthropic.claude-3-5-haiku-20241022-v1:0</option>
+              <option value="anthropic.claude-3-5-sonnet-20241022-v2:0">anthropic.claude-3-5-sonnet-20241022-v2:0</option>
+              </optgroup>
+            </select>
+          </label>
+          <label>
+            Max tokens
+            <input id="maxTokensInput" type="number" value="4096" min="128" max="12000" />
+          </label>
+          <label>
+            Temperature
+            <input id="temperatureInput" type="number" value="0.2" min="0" max="2" step="0.05" />
+          </label>
+          <button id="selfTestButton" type="button" class="secondary">SelfTest</button>
+          <button id="newThreadButton" type="button" class="secondary">新 Thread</button>
+          <button id="clearButton" type="button" class="secondary">清空畫面</button>
+        </aside>
+
+        <section id="messages" class="messages" aria-live="polite">
+          <article class="message assistant">
+            請輸入你的問題。我會保留同一個瀏覽器的對話脈絡，並依後端設定的 provider 產生回覆。
+          </article>
+        </section>
+
+        <aside class="log-panel">
+          <h2>Log Panel</h2>
+          <div id="logs" class="logs"></div>
+        </aside>
+      </section>
+
+      <form id="chatForm" class="composer">
+        <label class="sr-only" for="messageInput">訊息</label>
+        <textarea id="messageInput" rows="3" placeholder="例如：請分析台灣法金業務導入 AI 的機會、風險與落地步驟"></textarea>
+        <button id="sendButton" type="submit">送出</button>
+      </form>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
