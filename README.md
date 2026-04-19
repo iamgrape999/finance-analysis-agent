@@ -29,7 +29,7 @@ OPENROUTER_API_KEY=sk-or-...
 
 ```env
 FIREWORKS_API_KEY=fw_...
-FIREWORKS_MODEL=accounts/fireworks/models/deepseek-v3p1
+FIREWORKS_MODEL=accounts/fireworks/models/minimax-m2p7
 ```
 
 啟動：
@@ -64,7 +64,7 @@ http://localhost:8000/api/health
   "provider_order": "openrouter,gemini,cloudflare,groq,aws",
   "model_overrides": {
     "openrouter": "nvidia/nemotron-3-super-120b-a12b:free",
-    "fireworks": "accounts/fireworks/models/deepseek-v3p1"
+    "fireworks": "accounts/fireworks/models/minimax-m2p7"
   }
 }
 ```

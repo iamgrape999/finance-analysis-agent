@@ -54,7 +54,7 @@ CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID", "").strip()
 CF_MODEL = os.getenv("CF_MODEL", "@cf/meta/llama-3.1-8b-instruct").strip()
 
 FIREWORKS_API_KEY = os.getenv("FIREWORKS_API_KEY", "").strip()
-FIREWORKS_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/deepseek-v3p1").strip()
+FIREWORKS_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/minimax-m2p7").strip()
 FIREWORKS_BASE_URL = os.getenv("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1").rstrip("/")
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "").strip()
@@ -392,6 +392,12 @@ def list_fireworks_serverless_models(page_size: int = 100) -> List[Dict[str, Any
 
 def first_fireworks_serverless_model() -> str:
     models = list_fireworks_serverless_models(page_size=50)
+    preferred = os.getenv("FIREWORKS_MODEL", FIREWORKS_MODEL).strip()
+    if preferred:
+        for item in models:
+            name = str(item.get("name") or "").strip()
+            if name == preferred:
+                return name
     for item in models:
         name = str(item.get("name") or "").strip()
         if name:

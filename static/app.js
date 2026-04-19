@@ -3,6 +3,7 @@ const input = document.getElementById("messageInput");
 const maxTokensInput = document.getElementById("maxTokensInput");
 const temperatureInput = document.getElementById("temperatureInput");
 const providerOrderInput = document.getElementById("providerOrderInput");
+const responseModeInput = document.getElementById("responseModeInput");
 const apiBaseInput = document.getElementById("apiBaseInput");
 const modelInputs = {
   openrouter: document.getElementById("openrouterModelInput"),
@@ -31,13 +32,36 @@ const passwordError = document.getElementById("passwordError");
 const threadKey = "finance_agent_thread_id";
 const apiBaseKey = "finance_agent_api_base";
 const passwordKey = "finance_agent_app_password";
+const responseModeKey = "finance_agent_response_mode";
+const responsePresets = {
+  fast: {
+    label: "快速短答",
+    maxTokens: 512,
+    historyTurns: 2,
+    providerOrder: "groq,fireworks,openrouter,gemini,cloudflare,aws"
+  },
+  stable: {
+    label: "穩定聊天",
+    maxTokens: 1024,
+    historyTurns: 6,
+    providerOrder: "fireworks,openrouter,gemini,cloudflare,groq,aws"
+  },
+  deep: {
+    label: "深度分析",
+    maxTokens: 4096,
+    historyTurns: 8,
+    providerOrder: "fireworks,openrouter,gemini,cloudflare,groq,aws"
+  }
+};
 let threadId = localStorage.getItem(threadKey) || makeThreadId();
 localStorage.setItem(threadKey, threadId);
 threadInput.value = threadId;
 apiBaseInput.value = localStorage.getItem(apiBaseKey) || "";
 passwordApiBaseInput.value = apiBaseInput.value;
 let providerReadiness = {};
+let modelDefaults = {};
 let appPassword = localStorage.getItem(passwordKey) || "";
+responseModeInput.value = localStorage.getItem(responseModeKey) || "fast";
 
 function makeThreadId() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -100,6 +124,20 @@ function authHeaders(extra = {}) {
     headers["X-App-Password"] = appPassword;
   }
   return headers;
+}
+
+function currentResponsePreset() {
+  return responsePresets[responseModeInput.value] || responsePresets.fast;
+}
+
+function applyResponsePreset(shouldLog = true) {
+  const preset = currentResponsePreset();
+  maxTokensInput.value = String(preset.maxTokens);
+  providerOrderInput.value = preset.providerOrder;
+  localStorage.setItem(responseModeKey, responseModeInput.value);
+  if (shouldLog) {
+    log(`response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}`, "DEBUG");
+  }
 }
 
 function setUnlocked(unlocked) {
@@ -182,6 +220,7 @@ async function checkHealth() {
       return;
     }
     providerReadiness = data.providers || {};
+    modelDefaults = data.model_defaults || {};
     if (!data.password_required) {
       log("backend reports password_required=false; set APP_PASSWORD on Render to enforce login", "WARN");
     }
@@ -228,7 +267,9 @@ async function loadFireworksModels() {
     select.innerHTML = "";
     const defaultOption = document.createElement("option");
     defaultOption.value = "";
-    defaultOption.textContent = "使用 .env 預設";
+    defaultOption.textContent = modelDefaults.fireworks
+      ? `使用 .env 預設：${modelDefaults.fireworks}`
+      : "使用 .env 預設";
     select.appendChild(defaultOption);
 
     const group = document.createElement("optgroup");
@@ -254,16 +295,18 @@ async function loadFireworksModels() {
 
 function fireworksRank(name) {
   const n = String(name || "").toLowerCase();
-  if (n.includes("deepseek")) return 10;
-  if (n.includes("gpt-oss-120b")) return 20;
-  if (n.includes("glm-5")) return 30;
-  if (n.includes("qwen3p6")) return 40;
-  if (n.includes("kimi")) return 50;
-  if (n.includes("llama") && n.includes("70b")) return 60;
-  if (n.includes("minimax")) return 70;
-  if (n.includes("gpt-oss-20b")) return 80;
-  if (n.includes("qwen3-8b")) return 90;
-  if (n.includes("vl")) return 100;
+  if (n.includes("minimax-m2p7")) return 10;
+  if (n.includes("minimax")) return 20;
+  if (n.includes("deepseek-v3p2")) return 30;
+  if (n.includes("deepseek")) return 40;
+  if (n.includes("gpt-oss-120b")) return 50;
+  if (n.includes("glm-5")) return 60;
+  if (n.includes("qwen3p6")) return 70;
+  if (n.includes("kimi")) return 80;
+  if (n.includes("llama") && n.includes("70b")) return 90;
+  if (n.includes("gpt-oss-20b")) return 100;
+  if (n.includes("qwen3-8b")) return 110;
+  if (n.includes("vl")) return 120;
   return 999;
 }
 
@@ -285,15 +328,17 @@ async function sendMessage(message, endpoint = "/api/chat") {
 
   try {
     const started = performance.now();
+    const preset = currentResponsePreset();
     const res = await fetch(apiUrl(endpoint), {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         thread_id: threadId,
         message,
-        max_tokens: Number(maxTokensInput.value || 4096),
+        max_tokens: Number(maxTokensInput.value || preset.maxTokens),
         temperature: Number(temperatureInput.value || 0.2),
         use_history: true,
+        history_turns: preset.historyTurns,
         provider_order: providerOrderInput.value || null,
         model_overrides: collectModelOverrides()
       })
@@ -356,6 +401,10 @@ apiBaseInput.addEventListener("change", () => {
   checkHealth();
 });
 
+responseModeInput.addEventListener("change", () => {
+  applyResponsePreset(true);
+});
+
 selfTestButton.addEventListener("click", async () => {
   await sendMessage("SelfTest：請只回覆 OK，並用繁體中文。", "/api/selftest");
 });
@@ -390,4 +439,5 @@ passwordInput.addEventListener("keydown", (event) => {
 
 log("UI initialized", "STEP");
 setUnlocked(false);
+applyResponsePreset(false);
 checkHealth();

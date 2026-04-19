@@ -9,7 +9,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from Finance_Analysis_Agent_V581 import (
+    AWS_BEDROCK_MODEL,
+    CF_MODEL,
+    FIREWORKS_MODEL,
+    GEMINI_MODEL,
+    GROQ_MODEL,
     MemoryAdapter,
+    OPENROUTER_MODEL,
     call_fireworks,
     chat_once_detailed,
     first_fireworks_serverless_model,
@@ -41,6 +47,7 @@ class ChatRequest(BaseModel):
     max_tokens: Optional[int] = Field(default=None, ge=128, le=12000)
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     use_history: bool = True
+    history_turns: int = Field(default=8, ge=0, le=20)
     provider_order: Optional[str] = Field(default=None, max_length=120)
     model_overrides: Dict[str, str] = Field(default_factory=dict)
 
@@ -79,6 +86,14 @@ def health(x_app_password: Optional[str] = Header(default=None)) -> Dict[str, An
         "password_required": bool(APP_PASSWORD),
         "providers": provider_readiness(),
         "provider_order": resolve_provider_order(),
+        "model_defaults": {
+            "openrouter": os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL),
+            "fireworks": os.getenv("FIREWORKS_MODEL", FIREWORKS_MODEL),
+            "gemini": os.getenv("GEMINI_MODEL", GEMINI_MODEL),
+            "cloudflare": os.getenv("CF_MODEL", CF_MODEL),
+            "groq": os.getenv("GROQ_MODEL", GROQ_MODEL),
+            "aws": os.getenv("AWS_BEDROCK_MODEL", AWS_BEDROCK_MODEL),
+        },
     }
 
 
@@ -114,6 +129,7 @@ def _chat_impl(req: ChatRequest) -> ChatResponse:
             max_tokens_override=req.max_tokens,
             temperature_override=req.temperature,
             use_history=req.use_history,
+            history_turns=req.history_turns,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
