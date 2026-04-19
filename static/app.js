@@ -21,6 +21,7 @@ const selfTestButton = document.getElementById("selfTestButton");
 const newThreadButton = document.getElementById("newThreadButton");
 const clearButton = document.getElementById("clearButton");
 const passwordGate = document.getElementById("passwordGate");
+const protectedApp = document.getElementById("protectedApp");
 const mainWorkspace = document.getElementById("mainWorkspace");
 const passwordInput = document.getElementById("passwordInput");
 const passwordButton = document.getElementById("passwordButton");
@@ -65,8 +66,9 @@ function authHeaders(extra = {}) {
 
 function setUnlocked(unlocked) {
   passwordGate.classList.toggle("app-hidden", unlocked);
-  mainWorkspace.classList.toggle("app-locked", !unlocked);
-  form.classList.toggle("app-locked", !unlocked);
+  protectedApp.classList.toggle("app-locked", !unlocked);
+  input.disabled = !unlocked;
+  button.disabled = !unlocked;
 }
 
 function formatUsage(usage) {
@@ -134,6 +136,9 @@ async function checkHealth() {
       return;
     }
     providerReadiness = data.providers || {};
+    if (!data.password_required) {
+      log("backend reports password_required=false; set APP_PASSWORD on Render to enforce login", "WARN");
+    }
     const ready = Object.entries(data.providers || {})
       .filter(([, ok]) => ok)
       .map(([name]) => name);
@@ -147,6 +152,7 @@ async function checkHealth() {
   } catch (err) {
     statusEl.textContent = "後端未連線";
     statusEl.classList.add("warn");
+    setUnlocked(false);
     log(`health failed: ${err.message}`, "FAIL");
   }
 }
@@ -213,6 +219,10 @@ function fireworksRank(name) {
 
 async function sendMessage(message, endpoint = "/api/chat") {
   if (!message) return;
+  if (protectedApp.classList.contains("app-locked")) {
+    passwordError.textContent = "請先輸入密碼並連線。";
+    return;
+  }
 
   addMessage("user", message);
   input.value = "";

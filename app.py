@@ -76,6 +76,7 @@ def health(x_app_password: Optional[str] = Header(default=None)) -> Dict[str, An
     return {
         "ok": True,
         "app": APP_NAME,
+        "password_required": bool(APP_PASSWORD),
         "providers": provider_readiness(),
         "provider_order": resolve_provider_order(),
     }
