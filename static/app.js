@@ -24,6 +24,7 @@ const passwordGate = document.getElementById("passwordGate");
 const protectedApp = document.getElementById("protectedApp");
 const mainWorkspace = document.getElementById("mainWorkspace");
 const passwordInput = document.getElementById("passwordInput");
+const passwordApiBaseInput = document.getElementById("passwordApiBaseInput");
 const passwordButton = document.getElementById("passwordButton");
 const passwordError = document.getElementById("passwordError");
 
@@ -34,6 +35,7 @@ let threadId = localStorage.getItem(threadKey) || makeThreadId();
 localStorage.setItem(threadKey, threadId);
 threadInput.value = threadId;
 apiBaseInput.value = localStorage.getItem(apiBaseKey) || "";
+passwordApiBaseInput.value = apiBaseInput.value;
 let providerReadiness = {};
 let appPassword = localStorage.getItem(passwordKey) || "";
 
@@ -54,6 +56,13 @@ function log(message, level = "INFO") {
 function apiUrl(path) {
   const base = (apiBaseInput.value || "").trim().replace(/\/+$/, "");
   return base ? `${base}${path}` : path;
+}
+
+function syncApiBaseFromLogin() {
+  const value = passwordApiBaseInput.value.trim().replace(/\/+$/, "");
+  passwordApiBaseInput.value = value;
+  apiBaseInput.value = value;
+  localStorage.setItem(apiBaseKey, value);
 }
 
 function authHeaders(extra = {}) {
@@ -127,12 +136,20 @@ function collectModelOverrides() {
 
 async function checkHealth() {
   try {
+    passwordButton.disabled = true;
+    passwordButton.textContent = "連線中";
     const res = await fetch(apiUrl("/api/health"), { headers: authHeaders() });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
       setUnlocked(false);
       passwordError.textContent = "密碼不正確，請重新輸入。";
       log("health unauthorized: invalid password", "WARN");
+      return;
+    }
+    if (!res.ok) {
+      setUnlocked(false);
+      passwordError.textContent = `後端連線失敗：HTTP ${res.status}`;
+      log(`health failed: HTTP ${res.status}`, "FAIL");
       return;
     }
     providerReadiness = data.providers || {};
@@ -153,7 +170,11 @@ async function checkHealth() {
     statusEl.textContent = "後端未連線";
     statusEl.classList.add("warn");
     setUnlocked(false);
+    passwordError.textContent = `後端連線失敗：${err.message}`;
     log(`health failed: ${err.message}`, "FAIL");
+  } finally {
+    passwordButton.disabled = false;
+    passwordButton.textContent = "連線";
   }
 }
 
@@ -300,6 +321,7 @@ threadInput.addEventListener("change", () => {
 apiBaseInput.addEventListener("change", () => {
   const value = apiBaseInput.value.trim().replace(/\/+$/, "");
   apiBaseInput.value = value;
+  passwordApiBaseInput.value = value;
   localStorage.setItem(apiBaseKey, value);
   log(`backend api url updated: ${value || "same-origin"}`, "DEBUG");
   checkHealth();
@@ -324,6 +346,7 @@ clearButton.addEventListener("click", () => {
 });
 
 passwordButton.addEventListener("click", () => {
+  syncApiBaseFromLogin();
   appPassword = passwordInput.value;
   localStorage.setItem(passwordKey, appPassword);
   passwordError.textContent = "";
