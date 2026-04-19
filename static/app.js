@@ -53,16 +53,45 @@ function log(message, level = "INFO") {
   logs.scrollTop = logs.scrollHeight;
 }
 
+function normalizeApiBase(raw) {
+  let value = (raw || "").trim();
+  if (!value) return "";
+  if (!/^https?:\/\//i.test(value)) {
+    value = `https://${value}`;
+  }
+  try {
+    const url = new URL(value);
+    return url.origin.replace(/\/+$/, "");
+  } catch (err) {
+    return value.replace(/\/+$/, "");
+  }
+}
+
 function apiUrl(path) {
-  const base = (apiBaseInput.value || "").trim().replace(/\/+$/, "");
+  const base = normalizeApiBase(apiBaseInput.value);
   return base ? `${base}${path}` : path;
 }
 
 function syncApiBaseFromLogin() {
-  const value = passwordApiBaseInput.value.trim().replace(/\/+$/, "");
+  const value = normalizeApiBase(passwordApiBaseInput.value);
   passwordApiBaseInput.value = value;
   apiBaseInput.value = value;
   localStorage.setItem(apiBaseKey, value);
+}
+
+function friendlyNetworkError(err) {
+  const message = err?.message || String(err);
+  if (/load failed|failed to fetch|networkerror/i.test(message)) {
+    return [
+      "後端連線失敗。請確認：",
+      "1. Backend API URL 使用 https://，不是 http://。",
+      "2. 只填 Render 根網址，不要加 /api/health 或 /api/chat。",
+      "3. iPhone Safari 可直接打開 Render 的 /api/health。",
+      "4. Render Free 可能在冷啟動，等 30-60 秒後重試。",
+      `原始錯誤：${message}`
+    ].join("\n");
+  }
+  return message;
 }
 
 function authHeaders(extra = {}) {
@@ -319,7 +348,7 @@ threadInput.addEventListener("change", () => {
 });
 
 apiBaseInput.addEventListener("change", () => {
-  const value = apiBaseInput.value.trim().replace(/\/+$/, "");
+  const value = normalizeApiBase(apiBaseInput.value);
   apiBaseInput.value = value;
   passwordApiBaseInput.value = value;
   localStorage.setItem(apiBaseKey, value);
