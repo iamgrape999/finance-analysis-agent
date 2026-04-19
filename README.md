@@ -98,11 +98,13 @@ MEMORY_ROOT=/var/data/memory
 AGENT_PROVIDER_ORDER=openrouter,fireworks,gemini,cloudflare,groq,aws
 ```
 
-`render.yaml` 已經把 disk 掛到 `/var/data`，所以對話記憶會寫到：
+免費 Render service 不支援 persistent disk，所以 `render.yaml` 預設使用暫存路徑：
 
 ```text
-/var/data/memory
+/tmp/memory
 ```
+
+這足以讓瀏覽器對話程式上線測試，但 Render 休眠、重部署或重啟後，檔案型記憶可能消失。若要永久保存對話記憶，請升級 Render 並加 persistent disk，再把 `MEMORY_ROOT` 改成 `/var/data/memory`；或改用 Postgres/SQLite on persistent storage。
 
 ## GitHub Pages 分離前端
 

@@ -5,13 +5,9 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
-    disk:
-      name: finance-agent-memory
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: MEMORY_ROOT
-        value: /var/data/memory
+        value: /tmp/memory
       - key: AGENT_PROVIDER_ORDER
         value: openrouter,fireworks,gemini,cloudflare,groq,aws
       - key: DEBUG

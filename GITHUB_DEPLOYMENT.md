@@ -52,10 +52,16 @@ AWS_REGION=us-east-1
 
 At least one provider key is required.
 
-Render will mount persistent memory at:
+On Render free tier, persistent disks are not supported. The included `render.yaml` therefore uses temporary storage:
 
 ```text
-/var/data/memory
+/tmp/memory
+```
+
+This is enough for deployment testing, but memory may disappear after restarts or redeploys. For persistent memory, upgrade Render and add a disk mounted at `/var/data`, then set:
+
+```env
+MEMORY_ROOT=/var/data/memory
 ```
 
 ## 3. Enable GitHub Pages
