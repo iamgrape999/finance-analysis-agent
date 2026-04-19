@@ -1,4 +1,4 @@
-# Finance Analysis Agent Web
+# CathyChang AI Web
 
 這個專案把原本 Colab 取向的 `Finance_Analysis_Agent_V581.py` 改成可部署的瀏覽器 AI 對話程式：
 

@@ -25,7 +25,7 @@ from Finance_Analysis_Agent_V581 import (
 )
 
 
-APP_NAME = os.getenv("APP_NAME", "Finance Analysis Agent")
+APP_NAME = os.getenv("APP_NAME", "CathyChang AI")
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
 
