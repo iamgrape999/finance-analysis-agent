@@ -20,14 +20,21 @@ const logs = document.getElementById("logs");
 const selfTestButton = document.getElementById("selfTestButton");
 const newThreadButton = document.getElementById("newThreadButton");
 const clearButton = document.getElementById("clearButton");
+const passwordGate = document.getElementById("passwordGate");
+const mainWorkspace = document.getElementById("mainWorkspace");
+const passwordInput = document.getElementById("passwordInput");
+const passwordButton = document.getElementById("passwordButton");
+const passwordError = document.getElementById("passwordError");
 
 const threadKey = "finance_agent_thread_id";
 const apiBaseKey = "finance_agent_api_base";
+const passwordKey = "finance_agent_app_password";
 let threadId = localStorage.getItem(threadKey) || makeThreadId();
 localStorage.setItem(threadKey, threadId);
 threadInput.value = threadId;
 apiBaseInput.value = localStorage.getItem(apiBaseKey) || "";
 let providerReadiness = {};
+let appPassword = localStorage.getItem(passwordKey) || "";
 
 function makeThreadId() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -46,6 +53,20 @@ function log(message, level = "INFO") {
 function apiUrl(path) {
   const base = (apiBaseInput.value || "").trim().replace(/\/+$/, "");
   return base ? `${base}${path}` : path;
+}
+
+function authHeaders(extra = {}) {
+  const headers = { ...extra };
+  if (appPassword) {
+    headers["X-App-Password"] = appPassword;
+  }
+  return headers;
+}
+
+function setUnlocked(unlocked) {
+  passwordGate.classList.toggle("app-hidden", unlocked);
+  mainWorkspace.classList.toggle("app-locked", !unlocked);
+  form.classList.toggle("app-locked", !unlocked);
 }
 
 function formatUsage(usage) {
@@ -104,14 +125,21 @@ function collectModelOverrides() {
 
 async function checkHealth() {
   try {
-    const res = await fetch(apiUrl("/api/health"));
+    const res = await fetch(apiUrl("/api/health"), { headers: authHeaders() });
     const data = await res.json();
+    if (res.status === 401) {
+      setUnlocked(false);
+      passwordError.textContent = "密碼不正確，請重新輸入。";
+      log("health unauthorized: invalid password", "WARN");
+      return;
+    }
     providerReadiness = data.providers || {};
     const ready = Object.entries(data.providers || {})
       .filter(([, ok]) => ok)
       .map(([name]) => name);
     statusEl.textContent = ready.length ? `已連線：${ready.join(", ")}` : "尚未設定模型金鑰";
     statusEl.classList.toggle("warn", ready.length === 0);
+    setUnlocked(true);
     log(`health ok; providers=${ready.join(", ") || "none"}`, ready.length ? "OK" : "WARN");
     if (providerReadiness.fireworks) {
       loadFireworksModels();
@@ -127,7 +155,7 @@ async function loadFireworksModels() {
   const select = modelInputs.fireworks;
   if (!select) return;
   try {
-    const res = await fetch(apiUrl("/api/provider-models/fireworks"));
+    const res = await fetch(apiUrl("/api/provider-models/fireworks"), { headers: authHeaders() });
     const data = await res.json();
     if (!data.ok) {
       log(`fireworks model list failed: ${data.error || "unknown error"}`, "WARN");
@@ -199,7 +227,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
     const started = performance.now();
     const res = await fetch(apiUrl(endpoint), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         thread_id: threadId,
         message,
@@ -212,6 +240,11 @@ async function sendMessage(message, endpoint = "/api/chat") {
     });
 
     const data = await res.json();
+    if (res.status === 401) {
+      setUnlocked(false);
+      passwordError.textContent = "密碼不正確，請重新輸入。";
+      throw new Error("Invalid app password");
+    }
     if (!res.ok) {
       throw new Error(data.detail || `HTTP ${res.status}`);
     }
@@ -280,5 +313,19 @@ clearButton.addEventListener("click", () => {
   log("screen cleared", "DEBUG");
 });
 
+passwordButton.addEventListener("click", () => {
+  appPassword = passwordInput.value;
+  localStorage.setItem(passwordKey, appPassword);
+  passwordError.textContent = "";
+  checkHealth();
+});
+
+passwordInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    passwordButton.click();
+  }
+});
+
 log("UI initialized", "STEP");
+setUnlocked(false);
 checkHealth();

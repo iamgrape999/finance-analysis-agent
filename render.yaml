@@ -6,6 +6,8 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: APP_PASSWORD
+        sync: false
       - key: MEMORY_ROOT
         value: /tmp/memory
       - key: AGENT_PROVIDER_ORDER

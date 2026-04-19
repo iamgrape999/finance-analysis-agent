@@ -70,6 +70,49 @@ h1 {
   border-bottom: 1px solid #cdd6e1;
 }
 
+.app-hidden {
+  display: none !important;
+}
+
+.app-locked {
+  display: none !important;
+}
+
+.password-gate {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.password-box {
+  width: min(420px, 100%);
+  padding: 22px;
+  border: 1px solid #cdd6e1;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.password-box h2 {
+  margin: 0 0 8px;
+}
+
+.password-box p {
+  color: #526170;
+  line-height: 1.6;
+}
+
+.password-box input,
+.password-box button {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.password-error {
+  min-height: 20px;
+  color: #b42318 !important;
+}
+
 .settings,
 .log-panel {
   overflow-y: auto;

@@ -21,6 +21,7 @@ copy .env.example .env
 把 `.env` 裡至少一組模型金鑰補上，例如：
 
 ```env
+APP_PASSWORD=choose-a-strong-password
 OPENROUTER_API_KEY=sk-or-...
 ```
 

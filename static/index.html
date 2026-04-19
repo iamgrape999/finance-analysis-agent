@@ -16,7 +16,17 @@
         <div id="status" class="status">檢查連線中</div>
       </section>
 
-      <section class="workspace">
+      <section id="passwordGate" class="password-gate">
+        <div class="password-box">
+          <h2>輸入使用密碼</h2>
+          <p>此頁面會連到受保護的 AI 後端。請輸入管理者提供的密碼。</p>
+          <input id="passwordInput" type="password" placeholder="Password" autocomplete="current-password" />
+          <button id="passwordButton" type="button">連線</button>
+          <p id="passwordError" class="password-error"></p>
+        </div>
+      </section>
+
+      <section id="mainWorkspace" class="workspace app-locked">
         <aside class="settings">
           <h2>設定</h2>
           <label>

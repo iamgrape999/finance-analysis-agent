@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -21,6 +21,7 @@ from Finance_Analysis_Agent_V581 import (
 
 APP_NAME = os.getenv("APP_NAME", "Finance Analysis Agent")
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
+APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
 
 app = FastAPI(title=APP_NAME)
 
@@ -62,8 +63,16 @@ class MessageRecord(BaseModel):
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
+def require_password(x_app_password: Optional[str] = Header(default=None)) -> None:
+    if not APP_PASSWORD:
+        return
+    if (x_app_password or "") != APP_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid app password")
+
+
 @app.get("/api/health")
-def health() -> Dict[str, Any]:
+def health(x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    require_password(x_app_password)
     return {
         "ok": True,
         "app": APP_NAME,
@@ -73,7 +82,12 @@ def health() -> Dict[str, Any]:
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-def chat(req: ChatRequest) -> ChatResponse:
+def chat(req: ChatRequest, x_app_password: Optional[str] = Header(default=None)) -> ChatResponse:
+    require_password(x_app_password)
+    return _chat_impl(req)
+
+
+def _chat_impl(req: ChatRequest) -> ChatResponse:
     previous_provider_order = os.environ.get("AGENT_PROVIDER_ORDER")
     model_env_keys = {
         "openrouter": "OPENROUTER_MODEL",
@@ -127,7 +141,8 @@ def chat(req: ChatRequest) -> ChatResponse:
 
 
 @app.post("/api/selftest", response_model=ChatResponse)
-def selftest(req: ChatRequest) -> ChatResponse:
+def selftest(req: ChatRequest, x_app_password: Optional[str] = Header(default=None)) -> ChatResponse:
+    require_password(x_app_password)
     req.message = "SelfTest：請只回覆 OK，並用繁體中文。"
     req.max_tokens = req.max_tokens or 256
     req.temperature = 0.0
@@ -135,13 +150,15 @@ def selftest(req: ChatRequest) -> ChatResponse:
 
 
 @app.get("/api/threads/{thread_id}/messages", response_model=List[MessageRecord])
-def messages(thread_id: str) -> List[Dict[str, Any]]:
+def messages(thread_id: str, x_app_password: Optional[str] = Header(default=None)) -> List[Dict[str, Any]]:
+    require_password(x_app_password)
     adapter = MemoryAdapter(memory=None, THREAD_ID=thread_id)
     return adapter.load_chat_raw()
 
 
 @app.get("/api/provider-probe/{provider}")
-def provider_probe(provider: str, model: Optional[str] = None) -> Dict[str, Any]:
+def provider_probe(provider: str, model: Optional[str] = None, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    require_password(x_app_password)
     provider = provider.strip().lower()
     previous_model = os.environ.get("FIREWORKS_MODEL")
     try:
@@ -168,7 +185,8 @@ def provider_probe(provider: str, model: Optional[str] = None) -> Dict[str, Any]
 
 
 @app.get("/api/provider-models/{provider}")
-def provider_models(provider: str) -> Dict[str, Any]:
+def provider_models(provider: str, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    require_password(x_app_password)
     provider = provider.strip().lower()
     try:
         if provider != "fireworks":

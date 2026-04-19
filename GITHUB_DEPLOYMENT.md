@@ -41,6 +41,7 @@ In Render:
 ```env
 OPENROUTER_API_KEY=...
 FIREWORKS_API_KEY=...
+APP_PASSWORD=choose-a-strong-password
 GEMINI_API_KEY=...
 GROQ_API_KEY=...
 CF_API_TOKEN=...
@@ -51,6 +52,8 @@ AWS_REGION=us-east-1
 ```
 
 At least one provider key is required.
+
+`APP_PASSWORD` is optional for local testing, but should be set on Render if the public GitHub Pages UI should only be usable by people who know the password. The frontend sends it as `X-App-Password`; the backend returns `401` when it does not match.
 
 On Render free tier, persistent disks are not supported. The included `render.yaml` therefore uses temporary storage:
 
