@@ -18,10 +18,15 @@ from Finance_Analysis_Agent_V581 import (
     OPENROUTER_MODEL,
     call_fireworks,
     chat_once_detailed,
+    delete_global_fact,
+    delete_thread_memory,
     first_fireworks_serverless_model,
+    list_thread_summaries,
     list_fireworks_serverless_models,
+    load_global_facts,
     provider_readiness,
     resolve_provider_order,
+    upsert_global_fact,
 )
 
 
@@ -68,6 +73,18 @@ class MessageRecord(BaseModel):
     role: str
     content: str
     meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ThreadSummary(BaseModel):
+    thread_id: str
+    updated_at: str = ""
+    message_count: int = 0
+    preview: str = ""
+
+
+class GlobalFactRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=80)
+    value: str = Field(default="", max_length=2000)
 
 
 def require_password(x_app_password: Optional[str] = Header(default=None)) -> None:
@@ -171,6 +188,36 @@ def messages(thread_id: str, x_app_password: Optional[str] = Header(default=None
     require_password(x_app_password)
     adapter = MemoryAdapter(memory=None, THREAD_ID=thread_id)
     return adapter.load_chat_raw()
+
+
+@app.get("/api/threads", response_model=List[ThreadSummary])
+def threads(x_app_password: Optional[str] = Header(default=None)) -> List[Dict[str, Any]]:
+    require_password(x_app_password)
+    return list_thread_summaries()
+
+
+@app.delete("/api/threads/{thread_id}")
+def delete_thread(thread_id: str, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    require_password(x_app_password)
+    return {"ok": delete_thread_memory(thread_id), "thread_id": thread_id}
+
+
+@app.get("/api/global-memory")
+def global_memory(x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    require_password(x_app_password)
+    return {"ok": True, "facts": load_global_facts()}
+
+
+@app.put("/api/global-memory")
+def save_global_memory_fact(req: GlobalFactRequest, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    require_password(x_app_password)
+    return {"ok": True, "facts": upsert_global_fact(req.key, req.value)}
+
+
+@app.delete("/api/global-memory/{key}")
+def remove_global_memory_fact(key: str, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    require_password(x_app_password)
+    return {"ok": True, "facts": delete_global_fact(key)}
 
 
 @app.get("/api/provider-probe/{provider}")

@@ -141,6 +141,96 @@ h1 {
   font-size: 16px;
 }
 
+.sidebar-section {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #d3dce6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.sidebar-section h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.thread-list,
+.global-memory-list {
+  display: grid;
+  gap: 8px;
+}
+
+.thread-row,
+.memory-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.thread-row.active .thread-load {
+  border-color: #0f766e;
+  background: #e6f5f3;
+}
+
+.thread-load,
+.thread-delete,
+.memory-delete,
+.tiny-button {
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 1px solid #cdd6e1;
+  border-radius: 8px;
+  color: #18212f;
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.thread-load {
+  text-align: left;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.thread-delete,
+.memory-delete {
+  color: #b42318;
+  background: #fff1f2;
+  border-color: #fecdd3;
+}
+
+.memory-text {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #e1e7ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.global-memory-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.empty-state {
+  padding: 8px;
+  border: 1px dashed #cdd6e1;
+  border-radius: 8px;
+  color: #526170;
+  font-size: 12px;
+}
+
 .message {
   width: fit-content;
   max-width: min(86%, 820px);

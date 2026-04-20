@@ -35,6 +35,13 @@
             THREAD_ID
             <input id="threadInput" type="text" />
           </label>
+          <section class="sidebar-section">
+            <div class="section-title-row">
+              <h3>歷史對話</h3>
+              <button id="refreshThreadsButton" type="button" class="tiny-button">刷新</button>
+            </div>
+            <div id="threadList" class="thread-list"></div>
+          </section>
           <label>
             Backend API URL
             <input id="apiBaseInput" type="url" placeholder="同網域留空；GitHub Pages 填 Render URL" />
@@ -198,6 +205,15 @@
           <button id="selfTestButton" type="button" class="secondary">SelfTest</button>
           <button id="newThreadButton" type="button" class="secondary">新 Thread</button>
           <button id="clearButton" type="button" class="secondary">清空畫面</button>
+          <section class="sidebar-section">
+            <h3>全域記憶</h3>
+            <div id="globalMemoryList" class="global-memory-list"></div>
+            <div class="global-memory-editor">
+              <input id="globalMemoryKeyInput" type="text" placeholder="例如 customer_segment" />
+              <input id="globalMemoryValueInput" type="text" placeholder="例如 SME" />
+              <button id="saveGlobalMemoryButton" type="button" class="secondary">儲存全域記憶</button>
+            </div>
+          </section>
         </aside>
 
         <section id="messages" class="messages" aria-live="polite">

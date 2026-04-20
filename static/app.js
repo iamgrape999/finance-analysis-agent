@@ -21,6 +21,12 @@ const logs = document.getElementById("logs");
 const selfTestButton = document.getElementById("selfTestButton");
 const newThreadButton = document.getElementById("newThreadButton");
 const clearButton = document.getElementById("clearButton");
+const refreshThreadsButton = document.getElementById("refreshThreadsButton");
+const threadList = document.getElementById("threadList");
+const globalMemoryList = document.getElementById("globalMemoryList");
+const globalMemoryKeyInput = document.getElementById("globalMemoryKeyInput");
+const globalMemoryValueInput = document.getElementById("globalMemoryValueInput");
+const saveGlobalMemoryButton = document.getElementById("saveGlobalMemoryButton");
 const passwordGate = document.getElementById("passwordGate");
 const protectedApp = document.getElementById("protectedApp");
 const mainWorkspace = document.getElementById("mainWorkspace");
@@ -185,6 +191,18 @@ function addMessage(role, text, meta = {}) {
   messages.scrollTop = messages.scrollHeight;
 }
 
+function renderStoredMessages(records) {
+  messages.innerHTML = "";
+  if (!records.length) {
+    addMessage("assistant", "這個 Thread 目前沒有對話紀錄，可以直接開始輸入。");
+    return;
+  }
+  for (const record of records) {
+    const role = record.role === "user" ? "user" : "assistant";
+    addMessage(role, record.content || "", record.meta || {});
+  }
+}
+
 function setBusy(isBusy) {
   button.disabled = isBusy;
   input.disabled = isBusy;
@@ -234,6 +252,8 @@ async function checkHealth() {
     if (providerReadiness.fireworks) {
       loadFireworksModels();
     }
+    loadThreads();
+    loadGlobalMemory();
   } catch (err) {
     statusEl.textContent = "後端未連線";
     statusEl.classList.add("warn");
@@ -243,6 +263,178 @@ async function checkHealth() {
   } finally {
     passwordButton.disabled = false;
     passwordButton.textContent = "連線";
+  }
+}
+
+async function loadThreads() {
+  if (!threadList) return;
+  try {
+    const res = await fetch(apiUrl("/api/threads"), { headers: authHeaders() });
+    const data = await res.json().catch(() => []);
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+    threadList.innerHTML = "";
+    if (!data.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "尚無歷史對話";
+      threadList.appendChild(empty);
+      return;
+    }
+    for (const item of data) {
+      const row = document.createElement("div");
+      row.className = `thread-row${item.thread_id === threadId ? " active" : ""}`;
+
+      const loadBtn = document.createElement("button");
+      loadBtn.type = "button";
+      loadBtn.className = "thread-load";
+      loadBtn.dataset.threadId = item.thread_id;
+      loadBtn.textContent = `${item.preview || item.thread_id}\n${item.message_count || 0} 則 | ${item.updated_at || item.thread_id}`;
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "thread-delete";
+      deleteBtn.dataset.threadId = item.thread_id;
+      deleteBtn.textContent = "刪除";
+
+      row.appendChild(loadBtn);
+      row.appendChild(deleteBtn);
+      threadList.appendChild(row);
+    }
+  } catch (err) {
+    log(`load threads failed: ${err.message}`, "WARN");
+  }
+}
+
+async function loadThread(threadIdToLoad) {
+  if (!threadIdToLoad) return;
+  try {
+    const res = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadIdToLoad)}/messages`), { headers: authHeaders() });
+    const data = await res.json().catch(() => []);
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+    threadId = threadIdToLoad;
+    threadInput.value = threadId;
+    localStorage.setItem(threadKey, threadId);
+    renderStoredMessages(data);
+    loadThreads();
+    log(`loaded thread: ${threadId}`, "OK");
+  } catch (err) {
+    log(`load thread failed: ${err.message}`, "FAIL");
+  }
+}
+
+async function deleteThread(threadIdToDelete) {
+  if (!threadIdToDelete) return;
+  if (!window.confirm(`確定刪除此對話？\n${threadIdToDelete}`)) return;
+  try {
+    const res = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadIdToDelete)}`), {
+      method: "DELETE",
+      headers: authHeaders()
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+    if (threadIdToDelete === threadId) {
+      threadId = makeThreadId();
+      threadInput.value = threadId;
+      localStorage.setItem(threadKey, threadId);
+      messages.innerHTML = "";
+      addMessage("assistant", `已刪除原 Thread，並切換新 Thread：${threadId}`);
+    }
+    loadThreads();
+    log(`deleted thread: ${threadIdToDelete}`, "OK");
+  } catch (err) {
+    log(`delete thread failed: ${err.message}`, "FAIL");
+  }
+}
+
+async function loadGlobalMemory() {
+  if (!globalMemoryList) return;
+  try {
+    const res = await fetch(apiUrl("/api/global-memory"), { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+    renderGlobalMemory(data.facts || {});
+  } catch (err) {
+    log(`load global memory failed: ${err.message}`, "WARN");
+  }
+}
+
+function renderGlobalMemory(facts) {
+  globalMemoryList.innerHTML = "";
+  const entries = Object.entries(facts || {}).sort(([a], [b]) => a.localeCompare(b));
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "尚無全域記憶";
+    globalMemoryList.appendChild(empty);
+    return;
+  }
+  for (const [key, raw] of entries) {
+    const value = raw && typeof raw === "object" ? raw.value : raw;
+    const row = document.createElement("div");
+    row.className = "memory-row";
+    const text = document.createElement("div");
+    text.className = "memory-text";
+    text.textContent = `${key} = ${value ?? ""}`;
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "memory-delete";
+    deleteBtn.dataset.key = key;
+    deleteBtn.textContent = "刪除";
+    row.appendChild(text);
+    row.appendChild(deleteBtn);
+    globalMemoryList.appendChild(row);
+  }
+}
+
+async function saveGlobalMemory() {
+  const key = (globalMemoryKeyInput.value || "").trim();
+  const value = (globalMemoryValueInput.value || "").trim();
+  if (!key) {
+    log("global memory key is required", "WARN");
+    return;
+  }
+  try {
+    const res = await fetch(apiUrl("/api/global-memory"), {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ key, value })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+    globalMemoryKeyInput.value = "";
+    globalMemoryValueInput.value = "";
+    renderGlobalMemory(data.facts || {});
+    log(`saved global memory: ${key}`, "OK");
+  } catch (err) {
+    log(`save global memory failed: ${err.message}`, "FAIL");
+  }
+}
+
+async function deleteGlobalMemory(key) {
+  if (!key) return;
+  try {
+    const res = await fetch(apiUrl(`/api/global-memory/${encodeURIComponent(key)}`), {
+      method: "DELETE",
+      headers: authHeaders()
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+    renderGlobalMemory(data.facts || {});
+    log(`deleted global memory: ${key}`, "OK");
+  } catch (err) {
+    log(`delete global memory failed: ${err.message}`, "FAIL");
   }
 }
 
@@ -365,6 +557,8 @@ async function sendMessage(message, endpoint = "/api/chat") {
       log(`failover: ${data.failover_errors.map((item) => `${item.provider} -> ${item.error}`).join(" ; ")}`, "WARN");
     }
     log(`reply ok; provider=${data.provider || "unknown"} model=${data.model || "unknown"} latency=${data.latency_s ?? ((performance.now() - started) / 1000).toFixed(2)}s`, "OK");
+    loadThreads();
+    loadGlobalMemory();
   } catch (err) {
     addMessage("assistant", `發生錯誤：${err.message}`);
     log(`chat failed: ${err.message}`, "FAIL");
@@ -390,6 +584,7 @@ threadInput.addEventListener("change", () => {
   threadInput.value = threadId;
   localStorage.setItem(threadKey, threadId);
   log(`thread updated: ${threadId}`, "DEBUG");
+  loadThread(threadId);
 });
 
 apiBaseInput.addEventListener("change", () => {
@@ -413,14 +608,43 @@ newThreadButton.addEventListener("click", () => {
   threadId = makeThreadId();
   threadInput.value = threadId;
   localStorage.setItem(threadKey, threadId);
+  messages.innerHTML = "";
   addMessage("assistant", `已切換新 Thread：${threadId}`);
   log(`new thread: ${threadId}`, "DEBUG");
+  loadThreads();
 });
 
 clearButton.addEventListener("click", () => {
   messages.innerHTML = "";
   addMessage("assistant", "畫面已清空，不會刪除後端 memory。");
   log("screen cleared", "DEBUG");
+});
+
+refreshThreadsButton.addEventListener("click", () => {
+  loadThreads();
+});
+
+threadList.addEventListener("click", (event) => {
+  const loadBtn = event.target.closest(".thread-load");
+  if (loadBtn) {
+    loadThread(loadBtn.dataset.threadId);
+    return;
+  }
+  const deleteBtn = event.target.closest(".thread-delete");
+  if (deleteBtn) {
+    deleteThread(deleteBtn.dataset.threadId);
+  }
+});
+
+saveGlobalMemoryButton.addEventListener("click", () => {
+  saveGlobalMemory();
+});
+
+globalMemoryList.addEventListener("click", (event) => {
+  const deleteBtn = event.target.closest(".memory-delete");
+  if (deleteBtn) {
+    deleteGlobalMemory(deleteBtn.dataset.key);
+  }
 });
 
 passwordButton.addEventListener("click", () => {

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass
@@ -39,6 +40,8 @@ MEMORY_ROOT = os.environ.get("MEMORY_ROOT", "./data/memory")
 os.makedirs(MEMORY_ROOT, exist_ok=True)
 
 CHAT_FILENAME = "chat.jsonl"
+GLOBAL_MEMORY_DIRNAME = "_global"
+GLOBAL_FACTS_FILENAME = "facts.json"
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free").strip()
@@ -238,6 +241,115 @@ class MemoryAdapter:
 
     def save_summary(self, text: str) -> None:
         _atomic_write(self.summary_path, text or "")
+
+
+def _global_facts_path() -> str:
+    root = os.path.join(MEMORY_ROOT, GLOBAL_MEMORY_DIRNAME)
+    os.makedirs(root, exist_ok=True)
+    return os.path.join(root, GLOBAL_FACTS_FILENAME)
+
+
+def load_global_facts() -> Dict[str, Any]:
+    path = _global_facts_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_global_facts(facts: Dict[str, Any]) -> Dict[str, Any]:
+    clean = {}
+    for key, value in (facts or {}).items():
+        k = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(key).strip())[:80]
+        if not k:
+            continue
+        clean[k] = {
+            "value": str(value.get("value", "")) if isinstance(value, dict) else str(value),
+            "ts": str(value.get("ts", datetime.now().isoformat())) if isinstance(value, dict) else datetime.now().isoformat(),
+        }
+    _atomic_write(_global_facts_path(), json.dumps(clean, ensure_ascii=False, indent=2))
+    return clean
+
+
+def upsert_global_fact(key: str, value: str) -> Dict[str, Any]:
+    facts = load_global_facts()
+    k = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(key).strip())[:80]
+    if not k:
+        return facts
+    facts[k] = {"value": str(value).strip(), "ts": datetime.now().isoformat()}
+    return save_global_facts(facts)
+
+
+def delete_global_fact(key: str) -> Dict[str, Any]:
+    facts = load_global_facts()
+    facts.pop(str(key).strip(), None)
+    return save_global_facts(facts)
+
+
+def upsert_global_facts_from_text(text: str) -> Dict[str, Any]:
+    t = text or ""
+    if not re.search(r"(請)?記住|remember|全域記憶|長期記憶", t, flags=re.IGNORECASE):
+        return load_global_facts()
+    facts = load_global_facts()
+    now = datetime.now().isoformat()
+    for key, value in re.findall(r"([A-Za-z][A-Za-z0-9_.-]{1,79})\s*=\s*([^\s,;，；。]+)", t):
+        facts[key] = {"value": value.strip(), "ts": now}
+    return save_global_facts(facts)
+
+
+def list_thread_summaries() -> List[Dict[str, Any]]:
+    if not os.path.isdir(MEMORY_ROOT):
+        return []
+    out: List[Dict[str, Any]] = []
+    for name in os.listdir(MEMORY_ROOT):
+        if name == GLOBAL_MEMORY_DIRNAME:
+            continue
+        thread_dir = os.path.join(MEMORY_ROOT, name)
+        chat_path = os.path.join(thread_dir, CHAT_FILENAME)
+        if not os.path.isdir(thread_dir) or not os.path.exists(chat_path):
+            continue
+        rows = MemoryAdapter(memory=None, THREAD_ID=name).load_chat_raw()
+        if not rows:
+            continue
+        preview = ""
+        for row in rows:
+            if row.get("role") == "user" and row.get("content"):
+                preview = strip_redundant(str(row.get("content", "")))[:120]
+                break
+        updated_at = rows[-1].get("ts", "")
+        try:
+            mtime = os.path.getmtime(chat_path)
+        except Exception:
+            mtime = 0
+        out.append({
+            "thread_id": name,
+            "updated_at": updated_at,
+            "message_count": len(rows),
+            "preview": preview or name,
+            "mtime": mtime,
+        })
+    out.sort(key=lambda item: float(item.get("mtime") or 0), reverse=True)
+    for item in out:
+        item.pop("mtime", None)
+    return out
+
+
+def delete_thread_memory(thread_id: str) -> bool:
+    safe_id = _sanitize_thread_id(thread_id)
+    if not safe_id or safe_id == GLOBAL_MEMORY_DIRNAME:
+        return False
+    target = os.path.abspath(os.path.join(MEMORY_ROOT, safe_id))
+    root = os.path.abspath(MEMORY_ROOT)
+    if not (target == root or target.startswith(root + os.sep)):
+        return False
+    if not os.path.isdir(target):
+        return False
+    shutil.rmtree(target)
+    return True
 
 
 def provider_readiness() -> Dict[str, bool]:
@@ -552,6 +664,17 @@ def route_generate(prompt: str, max_tokens: int = MAX_OUTPUT_TOKENS, temperature
 
 def _build_context(adapter: MemoryAdapter, user_text: str, history_turns: int, use_history: bool, use_summary: bool) -> str:
     blocks: List[str] = []
+    global_facts = load_global_facts()
+    if global_facts:
+        lines = []
+        for key in sorted(global_facts.keys()):
+            value = global_facts[key]
+            if isinstance(value, dict):
+                lines.append(f"{key}={value.get('value', '')}")
+            else:
+                lines.append(f"{key}={value}")
+        if lines:
+            blocks.append("[全域記憶]\n" + "\n".join(lines))
     if use_summary:
         summary = adapter.load_summary()
         if summary:
@@ -605,6 +728,7 @@ def chat_once_detailed(
     adapter = MemoryAdapter(memory=memory, THREAD_ID=THREAD_ID or "WEB_DEFAULT")
     prompt = _build_context(adapter, user_text, history_turns=history_turns, use_history=use_history, use_summary=use_summary)
 
+    upsert_global_facts_from_text(user_text)
     adapter.add_turn("user", user_text)
     t0 = time.perf_counter()
     reply = route_generate(
