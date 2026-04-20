@@ -60,19 +60,19 @@ const responsePresets = {
     label: "快速短答",
     maxTokens: 3000,
     historyTurns: 2,
-    providerOrder: "fireworks,groq,openrouter,gemini,aws"
+    providerOrder: "groq,openrouter,cloudflare,gemini,aws,fireworks"
   },
   stable: {
     label: "穩定聊天",
     maxTokens: 4096,
     historyTurns: 4,
-    providerOrder: "fireworks,openrouter,groq,gemini,aws"
+    providerOrder: "openrouter,cloudflare,groq,gemini,aws,fireworks"
   },
   deep: {
     label: "深度分析",
     maxTokens: 6000,
     historyTurns: 6,
-    providerOrder: "openrouter,fireworks,gemini,groq,aws"
+    providerOrder: "openrouter,gemini,cloudflare,groq,aws,fireworks"
   }
 };
 let userId = sanitizeUserId(localStorage.getItem(userIdKey) || "");

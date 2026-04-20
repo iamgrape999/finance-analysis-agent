@@ -61,24 +61,22 @@
           <label>
             回覆模式
             <select id="responseModeInput">
-              <option value="fast" selected>快速短答（3000 tokens，Fireworks/Groq 優先）</option>
-              <option value="stable">穩定聊天（4096 tokens，Fireworks/OpenRouter 優先）</option>
-              <option value="deep">深度分析（6000 tokens，OpenRouter/Fireworks 優先）</option>
+              <option value="fast" selected>快速短答（3000 tokens，Groq/OpenRouter 優先，Fireworks 最後）</option>
+              <option value="stable">穩定聊天（4096 tokens，OpenRouter 優先，Fireworks 最後）</option>
+              <option value="deep">深度分析（6000 tokens，OpenRouter/Gemini 優先，Fireworks 最後）</option>
             </select>
           </label>
           <label>
             Provider 順序
             <select id="providerOrderInput">
               <option value="">自動</option>
-              <option value="fireworks,groq,openrouter,gemini,aws">快速短答：fireworks/groq 優先</option>
-              <option value="fireworks,openrouter,groq,gemini,aws">穩定聊天：fireworks/openrouter 優先</option>
-              <option value="openrouter,fireworks,gemini,groq,aws">深度分析：openrouter/fireworks 優先</option>
-              <option value="groq,fireworks,openrouter,gemini,cloudflare,aws">快速短答：groq/fireworks 優先</option>
-              <option value="openrouter,fireworks,gemini,cloudflare,groq,aws">openrouter 優先</option>
-              <option value="fireworks,openrouter,gemini,cloudflare,groq,aws">fireworks 優先</option>
-              <option value="gemini,openrouter,fireworks,cloudflare,groq,aws">gemini 優先</option>
-              <option value="cloudflare,openrouter,fireworks,gemini,groq,aws">cloudflare 優先</option>
-              <option value="groq,openrouter,fireworks,gemini,cloudflare,aws">groq 優先</option>
+              <option value="groq,openrouter,cloudflare,gemini,aws,fireworks">快速短答：groq/openrouter 優先，fireworks 最後</option>
+              <option value="openrouter,cloudflare,groq,gemini,aws,fireworks">穩定聊天：openrouter/cloudflare/groq 優先，fireworks 最後</option>
+              <option value="openrouter,gemini,cloudflare,groq,aws,fireworks">深度分析：openrouter/gemini 優先，fireworks 最後</option>
+              <option value="openrouter,cloudflare,groq,gemini,aws,fireworks">openrouter 優先，fireworks 最後</option>
+              <option value="cloudflare,openrouter,groq,gemini,aws,fireworks">cloudflare 優先，fireworks 最後</option>
+              <option value="groq,openrouter,cloudflare,gemini,aws,fireworks">groq 優先，fireworks 最後</option>
+              <option value="fireworks,openrouter,gemini,cloudflare,groq,aws">fireworks 優先（會消耗 Fireworks credit）</option>
             </select>
           </label>
           <label>
