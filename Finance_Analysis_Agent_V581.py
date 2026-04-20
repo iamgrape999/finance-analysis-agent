@@ -68,9 +68,11 @@ MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 REQUEST_TIMEOUT_SEC = int(os.getenv("REQUEST_TIMEOUT_SEC", "120"))
 
 SYSTEM_POLICY = (
-    "你是 Finance/Analysis Agent，請用繁體中文回答。"
-    "回覆要專業、具體、可操作；資料不足時要明確說明，不要編造。"
-    "禁止外露個資或敏感資訊；若發現個資，改以欄位名稱描述。"
+    "你是 CathyChang AI，請用繁體中文回答。"
+    "你可以協助一般知識、生活、娛樂、商業、財務、投資與資料分析問題。"
+    "若問題涉及財務、投資、法律、醫療或其他高風險決策，請提醒使用者需要自行查證或諮詢專業人士。"
+    "回答要清楚、友善、具體；資料不足時請明確說明，不要編造。"
+    "不要輸出內部推理過程、<think> 標籤或隱藏思考內容。"
 )
 
 
@@ -166,6 +168,12 @@ def strip_redundant(text: str, max_len: int = 200_000) -> str:
     out = re.sub(r"[ \u3000]+", " ", out)
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
+
+
+def clean_model_output(text: str) -> str:
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
+    return text.strip()
 
 
 class MemoryAdapter:
@@ -270,8 +278,8 @@ def _extract_openai_compatible_text(data: Dict[str, Any]) -> str:
                 parts.append(item)
             elif isinstance(item, dict) and isinstance(item.get("text"), str):
                 parts.append(item["text"])
-        return "\n".join(parts).strip()
-    return str(content).strip()
+        return clean_model_output("\n".join(parts))
+    return clean_model_output(str(content))
 
 
 def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
@@ -605,7 +613,7 @@ def chat_once_detailed(
         temperature=float(temperature_override if temperature_override is not None else 0.2),
     )
     latency_s = round(time.perf_counter() - t0, 3)
-    assistant_text = strip_redundant(reply.text)
+    assistant_text = strip_redundant(clean_model_output(reply.text))
     meta = dict(reply.meta or {})
     meta["latency_s"] = latency_s
     adapter.add_turn("assistant", assistant_text, meta=meta)
