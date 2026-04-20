@@ -85,6 +85,14 @@ http://localhost:8000/api/health
 
 ## 多使用者隔離
 
+建議正式多人使用時在 Render Environment 設定 `APP_USERS`，讓每位使用者有自己的密碼：
+
+```env
+APP_USERS=jasmine=StrongPassword1,iris=StrongPassword2,anna=StrongPassword3
+```
+
+若 `APP_USERS` 有設定，登入時必須輸入對應的 `User ID` 與個人密碼，例如 `jasmine + StrongPassword1`。若 `APP_USERS` 留空，系統才會退回使用共用的 `APP_PASSWORD`。
+
 網站入口使用 `APP_PASSWORD` 作為全站共用密碼，並要求每位使用者輸入自己的 `User ID`。前端會把它放在 HTTP header：
 
 ```http
@@ -121,6 +129,7 @@ MEMORY_ROOT/
 OPENROUTER_API_KEY=...
 FIREWORKS_API_KEY=...
 MEMORY_ROOT=/var/data/memory
+APP_USERS=jasmine=StrongPassword1,iris=StrongPassword2,anna=StrongPassword3
 AGENT_PROVIDER_ORDER=openrouter,fireworks,gemini,cloudflare,groq,aws
 ```
 

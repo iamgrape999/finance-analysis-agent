@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import hmac
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
@@ -34,6 +35,7 @@ from Finance_Analysis_Agent_V581 import (
 APP_NAME = os.getenv("APP_NAME", "CathyChang AI")
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
+APP_USERS_RAW = os.getenv("APP_USERS", "").strip()
 
 app = FastAPI(title=APP_NAME)
 
@@ -88,17 +90,51 @@ class GlobalFactRequest(BaseModel):
     value: str = Field(default="", max_length=2000)
 
 
-def require_password(x_app_password: Optional[str] = Header(default=None)) -> None:
-    if not APP_PASSWORD:
-        return
-    if (x_app_password or "") != APP_PASSWORD:
-        raise HTTPException(status_code=401, detail="Invalid app password")
+def _sanitize_user_id(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", (value or "").strip())[:80]
 
 
-def require_user_id(x_user_id: Optional[str] = Header(default=None)) -> str:
+def _parse_app_users() -> Dict[str, str]:
+    users: Dict[str, str] = {}
+    for item in re.split(r"[\n,;]+", APP_USERS_RAW):
+        raw = item.strip()
+        if not raw:
+            continue
+        if "=" in raw:
+            user, password = raw.split("=", 1)
+        elif ":" in raw:
+            user, password = raw.split(":", 1)
+        else:
+            continue
+        user_id = _sanitize_user_id(user)
+        password = password.strip()
+        if user_id and password:
+            users[user_id] = password
+    return users
+
+
+def configured_users() -> Dict[str, str]:
+    return _parse_app_users()
+
+
+def require_auth(
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> str:
     user_id = re.sub(r"[^A-Za-z0-9._-]+", "_", (x_user_id or "").strip())[:80]
     if not user_id:
         raise HTTPException(status_code=400, detail="Missing X-User-Id")
+
+    users = configured_users()
+    password = x_app_password or ""
+    if users:
+        expected = users.get(user_id)
+        if not expected or not hmac.compare_digest(password, expected):
+            raise HTTPException(status_code=401, detail="Invalid user id or password")
+        return user_id
+
+    if APP_PASSWORD and not hmac.compare_digest(password, APP_PASSWORD):
+        raise HTTPException(status_code=401, detail="Invalid app password")
     return user_id
 
 
@@ -107,14 +143,16 @@ def health(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_password(x_app_password)
-    user_id = require_user_id(x_user_id)
+    user_id = require_auth(x_app_password, x_user_id)
+    users = configured_users()
     return {
         "ok": True,
         "app": APP_NAME,
-        "password_required": bool(APP_PASSWORD),
+        "auth_mode": "per_user" if users else "shared_password",
+        "password_required": bool(APP_PASSWORD or users),
         "user_required": True,
         "user_id": user_id,
+        "configured_user_count": len(users),
         "storage_scope": f"users/{user_id}",
         "providers": provider_readiness(),
         "provider_order": resolve_provider_order(),
@@ -135,8 +173,7 @@ def chat(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> ChatResponse:
-    require_password(x_app_password)
-    user_id = require_user_id(x_user_id)
+    user_id = require_auth(x_app_password, x_user_id)
     return _chat_impl(req, user_id=user_id)
 
 
@@ -201,8 +238,7 @@ def selftest(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> ChatResponse:
-    require_password(x_app_password)
-    user_id = require_user_id(x_user_id)
+    user_id = require_auth(x_app_password, x_user_id)
     req.message = "SelfTest：請只回覆 OK，並用繁體中文。"
     req.max_tokens = req.max_tokens or 256
     req.temperature = 0.0
@@ -215,8 +251,7 @@ def messages(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> List[Dict[str, Any]]:
-    require_password(x_app_password)
-    user_id = require_user_id(x_user_id)
+    user_id = require_auth(x_app_password, x_user_id)
     adapter = MemoryAdapter(memory=None, THREAD_ID=thread_id, USER_ID=user_id)
     return adapter.load_chat_raw()
 
@@ -226,8 +261,7 @@ def threads(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> List[Dict[str, Any]]:
-    require_password(x_app_password)
-    user_id = require_user_id(x_user_id)
+    user_id = require_auth(x_app_password, x_user_id)
     return list_thread_summaries(user_id=user_id)
 
 
@@ -237,8 +271,7 @@ def delete_thread(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_password(x_app_password)
-    user_id = require_user_id(x_user_id)
+    user_id = require_auth(x_app_password, x_user_id)
     return {"ok": delete_thread_memory(thread_id, user_id=user_id), "thread_id": thread_id}
 
 
@@ -247,8 +280,7 @@ def global_memory(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_password(x_app_password)
-    user_id = require_user_id(x_user_id)
+    user_id = require_auth(x_app_password, x_user_id)
     return {"ok": True, "facts": load_global_facts(user_id=user_id)}
 
 
@@ -258,8 +290,7 @@ def save_global_memory_fact(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_password(x_app_password)
-    user_id = require_user_id(x_user_id)
+    user_id = require_auth(x_app_password, x_user_id)
     key = req.key.strip()
     value = req.value.strip()
     if "=" in key and not value:
@@ -273,14 +304,18 @@ def remove_global_memory_fact(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_password(x_app_password)
-    user_id = require_user_id(x_user_id)
+    user_id = require_auth(x_app_password, x_user_id)
     return {"ok": True, "facts": delete_global_fact(key, user_id=user_id)}
 
 
 @app.get("/api/provider-probe/{provider}")
-def provider_probe(provider: str, model: Optional[str] = None, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
-    require_password(x_app_password)
+def provider_probe(
+    provider: str,
+    model: Optional[str] = None,
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    require_auth(x_app_password, x_user_id)
     provider = provider.strip().lower()
     previous_model = os.environ.get("FIREWORKS_MODEL")
     try:
@@ -307,8 +342,12 @@ def provider_probe(provider: str, model: Optional[str] = None, x_app_password: O
 
 
 @app.get("/api/provider-models/{provider}")
-def provider_models(provider: str, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
-    require_password(x_app_password)
+def provider_models(
+    provider: str,
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    require_auth(x_app_password, x_user_id)
     provider = provider.strip().lower()
     try:
         if provider != "fireworks":
