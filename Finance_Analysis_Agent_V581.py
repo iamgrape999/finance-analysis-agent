@@ -277,7 +277,10 @@ def save_global_facts(facts: Dict[str, Any]) -> Dict[str, Any]:
 
 def upsert_global_fact(key: str, value: str) -> Dict[str, Any]:
     facts = load_global_facts()
-    k = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(key).strip())[:80]
+    raw_key = str(key).strip()
+    if "=" in raw_key and not str(value).strip():
+        raw_key, value = raw_key.split("=", 1)
+    k = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_key.strip())[:80]
     if not k:
         return facts
     facts[k] = {"value": str(value).strip(), "ts": datetime.now().isoformat()}

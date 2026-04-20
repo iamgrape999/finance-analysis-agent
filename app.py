@@ -83,7 +83,7 @@ class ThreadSummary(BaseModel):
 
 
 class GlobalFactRequest(BaseModel):
-    key: str = Field(min_length=1, max_length=80)
+    key: str = Field(min_length=1, max_length=2000)
     value: str = Field(default="", max_length=2000)
 
 
@@ -211,7 +211,11 @@ def global_memory(x_app_password: Optional[str] = Header(default=None)) -> Dict[
 @app.put("/api/global-memory")
 def save_global_memory_fact(req: GlobalFactRequest, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
     require_password(x_app_password)
-    return {"ok": True, "facts": upsert_global_fact(req.key, req.value)}
+    key = req.key.strip()
+    value = req.value.strip()
+    if "=" in key and not value:
+        key, value = key.split("=", 1)
+    return {"ok": True, "facts": upsert_global_fact(key, value)}
 
 
 @app.delete("/api/global-memory/{key}")

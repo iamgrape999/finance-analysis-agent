@@ -403,13 +403,22 @@ function renderGlobalMemory(facts) {
 }
 
 async function saveGlobalMemory() {
-  const key = (globalMemoryKeyInput.value || "").trim();
-  const value = (globalMemoryValueInput.value || "").trim();
+  saveGlobalMemoryButton.disabled = true;
+  const rawKey = (globalMemoryKeyInput.value || "").trim();
+  let key = rawKey;
+  let value = (globalMemoryValueInput.value || "").trim();
+  if (rawKey.includes("=") && !value) {
+    const parts = rawKey.split("=");
+    key = parts.shift().trim();
+    value = parts.join("=").trim();
+  }
   if (!key) {
     log("global memory key is required", "WARN");
+    saveGlobalMemoryButton.disabled = false;
     return;
   }
   try {
+    log(`saving global memory: ${key}`, "CALL");
     const res = await fetch(apiUrl("/api/global-memory"), {
       method: "PUT",
       headers: authHeaders({ "Content-Type": "application/json" }),
@@ -422,9 +431,12 @@ async function saveGlobalMemory() {
     globalMemoryKeyInput.value = "";
     globalMemoryValueInput.value = "";
     renderGlobalMemory(data.facts || {});
+    await loadGlobalMemory();
     log(`saved global memory: ${key}`, "OK");
   } catch (err) {
     log(`save global memory failed: ${err.message}`, "FAIL");
+  } finally {
+    saveGlobalMemoryButton.disabled = false;
   }
 }
 
@@ -663,6 +675,18 @@ threadList.addEventListener("click", (event) => {
 
 saveGlobalMemoryButton.addEventListener("click", () => {
   saveGlobalMemory();
+});
+
+globalMemoryKeyInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    saveGlobalMemory();
+  }
+});
+
+globalMemoryValueInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    saveGlobalMemory();
+  }
 });
 
 globalMemoryList.addEventListener("click", (event) => {
