@@ -9,11 +9,20 @@
   <body>
     <main class="app">
       <section class="topbar">
-        <div>
-          <p class="eyebrow">CathyChang AI</p>
-          <h1>CathyChang AI</h1>
+        <div class="topbar-brand">
+          <div class="topbar-actions">
+            <button id="toggleSidebarButton" type="button" class="icon-button" aria-label="切換歷史側欄">☰</button>
+            <div>
+              <p class="eyebrow">CathyChang AI</p>
+              <h1>CathyChang AI</h1>
+            </div>
+          </div>
         </div>
-        <div id="status" class="status">檢查連線中</div>
+        <div class="topbar-actions">
+          <button id="toggleSettingsButton" type="button" class="utility-button">設定</button>
+          <button id="toggleLogButton" type="button" class="utility-button">Log</button>
+          <div id="status" class="status">檢查連線中</div>
+        </div>
       </section>
 
       <section id="passwordGate" class="password-gate">
@@ -30,7 +39,7 @@
       <div id="protectedApp" class="protected-app app-locked">
       <section id="mainWorkspace" class="workspace">
         <aside class="settings">
-          <h2>設定</h2>
+          <h2>對話</h2>
           <label>
             THREAD_ID
             <input id="threadInput" type="text" />
@@ -42,6 +51,8 @@
             </div>
             <div id="threadList" class="thread-list"></div>
           </section>
+          <details id="advancedSettings" class="advanced-settings">
+            <summary>設定與模型</summary>
           <label>
             Backend API URL
             <input id="apiBaseInput" type="url" placeholder="同網域留空；GitHub Pages 填 Render URL" />
@@ -202,6 +213,7 @@
             Temperature
             <input id="temperatureInput" type="number" value="0.2" min="0" max="2" step="0.05" />
           </label>
+          </details>
           <button id="selfTestButton" type="button" class="secondary">SelfTest</button>
           <button id="newThreadButton" type="button" class="secondary">新 Thread</button>
           <button id="clearButton" type="button" class="secondary">清空畫面</button>
@@ -222,8 +234,11 @@
           </article>
         </section>
 
-        <aside class="log-panel">
+        <aside id="logPanel" class="log-panel">
+          <div class="panel-title-row">
           <h2>Log Panel</h2>
+            <button id="closeLogButton" type="button" class="tiny-button">關閉</button>
+          </div>
           <div id="logs" class="logs"></div>
         </aside>
       </section>

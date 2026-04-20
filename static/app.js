@@ -5,6 +5,11 @@ const temperatureInput = document.getElementById("temperatureInput");
 const providerOrderInput = document.getElementById("providerOrderInput");
 const responseModeInput = document.getElementById("responseModeInput");
 const apiBaseInput = document.getElementById("apiBaseInput");
+const toggleSidebarButton = document.getElementById("toggleSidebarButton");
+const toggleSettingsButton = document.getElementById("toggleSettingsButton");
+const toggleLogButton = document.getElementById("toggleLogButton");
+const closeLogButton = document.getElementById("closeLogButton");
+const advancedSettings = document.getElementById("advancedSettings");
 const modelInputs = {
   openrouter: document.getElementById("openrouterModelInput"),
   fireworks: document.getElementById("fireworksModelInput"),
@@ -18,6 +23,7 @@ const messages = document.getElementById("messages");
 const button = document.getElementById("sendButton");
 const statusEl = document.getElementById("status");
 const logs = document.getElementById("logs");
+const logPanel = document.getElementById("logPanel");
 const selfTestButton = document.getElementById("selfTestButton");
 const newThreadButton = document.getElementById("newThreadButton");
 const clearButton = document.getElementById("clearButton");
@@ -188,7 +194,9 @@ function addMessage(role, text, meta = {}) {
   }
 
   messages.appendChild(el);
-  messages.scrollTop = messages.scrollHeight;
+  requestAnimationFrame(() => {
+    messages.scrollTop = messages.scrollHeight;
+  });
 }
 
 function renderStoredMessages(records) {
@@ -577,6 +585,23 @@ input.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     form.requestSubmit();
   }
+});
+
+toggleSidebarButton.addEventListener("click", () => {
+  mainWorkspace.classList.toggle("sidebar-collapsed");
+});
+
+toggleSettingsButton.addEventListener("click", () => {
+  mainWorkspace.classList.remove("sidebar-collapsed");
+  advancedSettings.open = !advancedSettings.open;
+});
+
+toggleLogButton.addEventListener("click", () => {
+  logPanel.classList.toggle("is-open");
+});
+
+closeLogButton.addEventListener("click", () => {
+  logPanel.classList.remove("is-open");
 });
 
 threadInput.addEventListener("change", () => {
