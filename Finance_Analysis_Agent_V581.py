@@ -40,6 +40,7 @@ MEMORY_ROOT = os.environ.get("MEMORY_ROOT", "./data/memory")
 os.makedirs(MEMORY_ROOT, exist_ok=True)
 
 CHAT_FILENAME = "chat.jsonl"
+USERS_MEMORY_DIRNAME = "users"
 GLOBAL_MEMORY_DIRNAME = "_global"
 GLOBAL_FACTS_FILENAME = "facts.json"
 
@@ -93,6 +94,19 @@ def debug_log(*parts: Any) -> None:
 def _sanitize_thread_id(value: str) -> str:
     value = value or "THREAD_DEFAULT"
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value)[:80] or "THREAD_DEFAULT"
+
+
+def _sanitize_user_id(value: str) -> str:
+    value = value or "default"
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())[:80] or "default"
+
+
+def _memory_base(user_id: Optional[str] = None) -> str:
+    if not user_id:
+        return MEMORY_ROOT
+    base = os.path.join(MEMORY_ROOT, USERS_MEMORY_DIRNAME, _sanitize_user_id(user_id))
+    os.makedirs(base, exist_ok=True)
+    return base
 
 
 def _lock_path(path: str) -> str:
@@ -180,10 +194,11 @@ def clean_model_output(text: str) -> str:
 
 
 class MemoryAdapter:
-    def __init__(self, memory: Any = None, THREAD_ID: str = "THREAD_DEFAULT"):
+    def __init__(self, memory: Any = None, THREAD_ID: str = "THREAD_DEFAULT", USER_ID: Optional[str] = None):
         del memory
+        self.user_id = _sanitize_user_id(USER_ID) if USER_ID else ""
         self.thread_id = _sanitize_thread_id(THREAD_ID)
-        self.thread_dir = os.path.join(MEMORY_ROOT, self.thread_id)
+        self.thread_dir = os.path.join(_memory_base(self.user_id), self.thread_id)
         os.makedirs(self.thread_dir, exist_ok=True)
         self.chat_path = os.path.join(self.thread_dir, CHAT_FILENAME)
         self.summary_path = os.path.join(self.thread_dir, "summary.md")
@@ -243,14 +258,14 @@ class MemoryAdapter:
         _atomic_write(self.summary_path, text or "")
 
 
-def _global_facts_path() -> str:
-    root = os.path.join(MEMORY_ROOT, GLOBAL_MEMORY_DIRNAME)
+def _global_facts_path(user_id: Optional[str] = None) -> str:
+    root = os.path.join(_memory_base(user_id), GLOBAL_MEMORY_DIRNAME)
     os.makedirs(root, exist_ok=True)
     return os.path.join(root, GLOBAL_FACTS_FILENAME)
 
 
-def load_global_facts() -> Dict[str, Any]:
-    path = _global_facts_path()
+def load_global_facts(user_id: Optional[str] = None) -> Dict[str, Any]:
+    path = _global_facts_path(user_id)
     if not os.path.exists(path):
         return {}
     try:
@@ -261,7 +276,7 @@ def load_global_facts() -> Dict[str, Any]:
         return {}
 
 
-def save_global_facts(facts: Dict[str, Any]) -> Dict[str, Any]:
+def save_global_facts(facts: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     clean = {}
     for key, value in (facts or {}).items():
         k = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(key).strip())[:80]
@@ -271,12 +286,12 @@ def save_global_facts(facts: Dict[str, Any]) -> Dict[str, Any]:
             "value": str(value.get("value", "")) if isinstance(value, dict) else str(value),
             "ts": str(value.get("ts", datetime.now().isoformat())) if isinstance(value, dict) else datetime.now().isoformat(),
         }
-    _atomic_write(_global_facts_path(), json.dumps(clean, ensure_ascii=False, indent=2))
+    _atomic_write(_global_facts_path(user_id), json.dumps(clean, ensure_ascii=False, indent=2))
     return clean
 
 
-def upsert_global_fact(key: str, value: str) -> Dict[str, Any]:
-    facts = load_global_facts()
+def upsert_global_fact(key: str, value: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+    facts = load_global_facts(user_id)
     raw_key = str(key).strip()
     if "=" in raw_key and not str(value).strip():
         raw_key, value = raw_key.split("=", 1)
@@ -284,38 +299,39 @@ def upsert_global_fact(key: str, value: str) -> Dict[str, Any]:
     if not k:
         return facts
     facts[k] = {"value": str(value).strip(), "ts": datetime.now().isoformat()}
-    return save_global_facts(facts)
+    return save_global_facts(facts, user_id)
 
 
-def delete_global_fact(key: str) -> Dict[str, Any]:
-    facts = load_global_facts()
+def delete_global_fact(key: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+    facts = load_global_facts(user_id)
     facts.pop(str(key).strip(), None)
-    return save_global_facts(facts)
+    return save_global_facts(facts, user_id)
 
 
-def upsert_global_facts_from_text(text: str) -> Dict[str, Any]:
+def upsert_global_facts_from_text(text: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     t = text or ""
     if not re.search(r"(請)?記住|remember|全域記憶|長期記憶", t, flags=re.IGNORECASE):
-        return load_global_facts()
-    facts = load_global_facts()
+        return load_global_facts(user_id)
+    facts = load_global_facts(user_id)
     now = datetime.now().isoformat()
     for key, value in re.findall(r"([A-Za-z][A-Za-z0-9_.-]{1,79})\s*=\s*([^\s,;，；。]+)", t):
         facts[key] = {"value": value.strip(), "ts": now}
-    return save_global_facts(facts)
+    return save_global_facts(facts, user_id)
 
 
-def list_thread_summaries() -> List[Dict[str, Any]]:
-    if not os.path.isdir(MEMORY_ROOT):
+def list_thread_summaries(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    base = _memory_base(user_id)
+    if not os.path.isdir(base):
         return []
     out: List[Dict[str, Any]] = []
-    for name in os.listdir(MEMORY_ROOT):
-        if name == GLOBAL_MEMORY_DIRNAME:
+    for name in os.listdir(base):
+        if name in {GLOBAL_MEMORY_DIRNAME, USERS_MEMORY_DIRNAME}:
             continue
-        thread_dir = os.path.join(MEMORY_ROOT, name)
+        thread_dir = os.path.join(base, name)
         chat_path = os.path.join(thread_dir, CHAT_FILENAME)
         if not os.path.isdir(thread_dir) or not os.path.exists(chat_path):
             continue
-        rows = MemoryAdapter(memory=None, THREAD_ID=name).load_chat_raw()
+        rows = MemoryAdapter(memory=None, THREAD_ID=name, USER_ID=user_id).load_chat_raw()
         if not rows:
             continue
         preview = ""
@@ -341,12 +357,13 @@ def list_thread_summaries() -> List[Dict[str, Any]]:
     return out
 
 
-def delete_thread_memory(thread_id: str) -> bool:
+def delete_thread_memory(thread_id: str, user_id: Optional[str] = None) -> bool:
     safe_id = _sanitize_thread_id(thread_id)
-    if not safe_id or safe_id == GLOBAL_MEMORY_DIRNAME:
+    if not safe_id or safe_id in {GLOBAL_MEMORY_DIRNAME, USERS_MEMORY_DIRNAME}:
         return False
-    target = os.path.abspath(os.path.join(MEMORY_ROOT, safe_id))
-    root = os.path.abspath(MEMORY_ROOT)
+    base = _memory_base(user_id)
+    target = os.path.abspath(os.path.join(base, safe_id))
+    root = os.path.abspath(base)
     if not (target == root or target.startswith(root + os.sep)):
         return False
     if not os.path.isdir(target):
@@ -665,9 +682,16 @@ def route_generate(prompt: str, max_tokens: int = MAX_OUTPUT_TOKENS, temperature
     )
 
 
-def _build_context(adapter: MemoryAdapter, user_text: str, history_turns: int, use_history: bool, use_summary: bool) -> str:
+def _build_context(
+    adapter: MemoryAdapter,
+    user_text: str,
+    history_turns: int,
+    use_history: bool,
+    use_summary: bool,
+    user_id: Optional[str] = None,
+) -> str:
     blocks: List[str] = []
-    global_facts = load_global_facts()
+    global_facts = load_global_facts(user_id)
     if global_facts:
         lines = []
         for key in sorted(global_facts.keys()):
@@ -722,16 +746,24 @@ def chat_once_detailed(
     history_turns: int = 8,
     use_summary: bool = True,
     summary_chars: int = 1800,
+    user_id: Optional[str] = None,
 ) -> str:
     del min_tokens, summary_chars
     user_text = strip_redundant(user_text_or_prompt)
     if not user_text:
         return {"reply": "請輸入問題。", "meta": {"provider": "local"}}
 
-    adapter = MemoryAdapter(memory=memory, THREAD_ID=THREAD_ID or "WEB_DEFAULT")
-    prompt = _build_context(adapter, user_text, history_turns=history_turns, use_history=use_history, use_summary=use_summary)
+    adapter = MemoryAdapter(memory=memory, THREAD_ID=THREAD_ID or "WEB_DEFAULT", USER_ID=user_id)
+    prompt = _build_context(
+        adapter,
+        user_text,
+        history_turns=history_turns,
+        use_history=use_history,
+        use_summary=use_summary,
+        user_id=user_id,
+    )
 
-    upsert_global_facts_from_text(user_text)
+    upsert_global_facts_from_text(user_text, user_id=user_id)
     adapter.add_turn("user", user_text)
     t0 = time.perf_counter()
     reply = route_generate(
@@ -763,6 +795,7 @@ def chat_once(
     history_turns: int = 8,
     use_summary: bool = True,
     summary_chars: int = 1800,
+    user_id: Optional[str] = None,
 ) -> str:
     result = chat_once_detailed(
         memory=memory,
@@ -776,6 +809,7 @@ def chat_once(
         history_turns=history_turns,
         use_summary=use_summary,
         summary_chars=summary_chars,
+        user_id=user_id,
     )
     assistant_text = str(result.get("reply", ""))
     return assistant_text

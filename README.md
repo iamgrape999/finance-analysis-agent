@@ -8,6 +8,7 @@
 - Render 使用 `render.yaml` 一鍵部署
 - secrets 走環境變數
 - `MEMORY_ROOT` 可掛 Render persistent disk
+- 多人使用時以 `APP_PASSWORD + User ID` 隔離歷史對話與全域記憶
 
 ## 本機啟動
 
@@ -82,6 +83,30 @@ http://localhost:8000/api/health
 
 讀取該 thread 的 JSONL 對話紀錄。
 
+## 多使用者隔離
+
+網站入口使用 `APP_PASSWORD` 作為全站共用密碼，並要求每位使用者輸入自己的 `User ID`。前端會把它放在 HTTP header：
+
+```http
+X-App-Password: <APP_PASSWORD>
+X-User-Id: hanli
+```
+
+後端會把資料分開存放：
+
+```text
+MEMORY_ROOT/
+  users/
+    hanli/
+      _global/facts.json
+      WEB_.../chat.jsonl
+    cathy/
+      _global/facts.json
+      WEB_.../chat.jsonl
+```
+
+因此 `/api/threads`、`/api/chat`、`/api/global-memory` 都只會讀寫該 `User ID` 底下的資料。請為每位使用者分配不同的 User ID，例如 `hanli`、`cathy`、`user01`。
+
 ## Render 部署
 
 1. 將 repo 推到 GitHub。
@@ -128,5 +153,5 @@ CORS_ALLOW_ORIGINS=https://YOUR_NAME.github.io
 
 - 不要把 `.env` 或任何 API Key commit 到 GitHub。
 - 瀏覽器前端不能直接保存 provider API Key。
-- 多人正式使用時，建議加登入，避免使用者猜測別人的 `thread_id`。
+- 多人正式使用時，至少要使用不同 `User ID`；若再擴大使用，建議升級成正式帳號登入與 session/JWT。
 - 檔案型 JSONL memory 適合 MVP；正式多用戶版本建議改成 Postgres 或 SQLite。

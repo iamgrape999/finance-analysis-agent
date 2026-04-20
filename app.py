@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
@@ -94,13 +95,27 @@ def require_password(x_app_password: Optional[str] = Header(default=None)) -> No
         raise HTTPException(status_code=401, detail="Invalid app password")
 
 
+def require_user_id(x_user_id: Optional[str] = Header(default=None)) -> str:
+    user_id = re.sub(r"[^A-Za-z0-9._-]+", "_", (x_user_id or "").strip())[:80]
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing X-User-Id")
+    return user_id
+
+
 @app.get("/api/health")
-def health(x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+def health(
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
     require_password(x_app_password)
+    user_id = require_user_id(x_user_id)
     return {
         "ok": True,
         "app": APP_NAME,
         "password_required": bool(APP_PASSWORD),
+        "user_required": True,
+        "user_id": user_id,
+        "storage_scope": f"users/{user_id}",
         "providers": provider_readiness(),
         "provider_order": resolve_provider_order(),
         "model_defaults": {
@@ -115,12 +130,17 @@ def health(x_app_password: Optional[str] = Header(default=None)) -> Dict[str, An
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-def chat(req: ChatRequest, x_app_password: Optional[str] = Header(default=None)) -> ChatResponse:
+def chat(
+    req: ChatRequest,
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> ChatResponse:
     require_password(x_app_password)
-    return _chat_impl(req)
+    user_id = require_user_id(x_user_id)
+    return _chat_impl(req, user_id=user_id)
 
 
-def _chat_impl(req: ChatRequest) -> ChatResponse:
+def _chat_impl(req: ChatRequest, user_id: str) -> ChatResponse:
     previous_provider_order = os.environ.get("AGENT_PROVIDER_ORDER")
     model_env_keys = {
         "openrouter": "OPENROUTER_MODEL",
@@ -147,6 +167,7 @@ def _chat_impl(req: ChatRequest) -> ChatResponse:
             temperature_override=req.temperature,
             use_history=req.use_history,
             history_turns=req.history_turns,
+            user_id=user_id,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -175,53 +196,86 @@ def _chat_impl(req: ChatRequest) -> ChatResponse:
 
 
 @app.post("/api/selftest", response_model=ChatResponse)
-def selftest(req: ChatRequest, x_app_password: Optional[str] = Header(default=None)) -> ChatResponse:
+def selftest(
+    req: ChatRequest,
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> ChatResponse:
     require_password(x_app_password)
+    user_id = require_user_id(x_user_id)
     req.message = "SelfTest：請只回覆 OK，並用繁體中文。"
     req.max_tokens = req.max_tokens or 256
     req.temperature = 0.0
-    return chat(req)
+    return _chat_impl(req, user_id=user_id)
 
 
 @app.get("/api/threads/{thread_id}/messages", response_model=List[MessageRecord])
-def messages(thread_id: str, x_app_password: Optional[str] = Header(default=None)) -> List[Dict[str, Any]]:
+def messages(
+    thread_id: str,
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> List[Dict[str, Any]]:
     require_password(x_app_password)
-    adapter = MemoryAdapter(memory=None, THREAD_ID=thread_id)
+    user_id = require_user_id(x_user_id)
+    adapter = MemoryAdapter(memory=None, THREAD_ID=thread_id, USER_ID=user_id)
     return adapter.load_chat_raw()
 
 
 @app.get("/api/threads", response_model=List[ThreadSummary])
-def threads(x_app_password: Optional[str] = Header(default=None)) -> List[Dict[str, Any]]:
+def threads(
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> List[Dict[str, Any]]:
     require_password(x_app_password)
-    return list_thread_summaries()
+    user_id = require_user_id(x_user_id)
+    return list_thread_summaries(user_id=user_id)
 
 
 @app.delete("/api/threads/{thread_id}")
-def delete_thread(thread_id: str, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+def delete_thread(
+    thread_id: str,
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
     require_password(x_app_password)
-    return {"ok": delete_thread_memory(thread_id), "thread_id": thread_id}
+    user_id = require_user_id(x_user_id)
+    return {"ok": delete_thread_memory(thread_id, user_id=user_id), "thread_id": thread_id}
 
 
 @app.get("/api/global-memory")
-def global_memory(x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+def global_memory(
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
     require_password(x_app_password)
-    return {"ok": True, "facts": load_global_facts()}
+    user_id = require_user_id(x_user_id)
+    return {"ok": True, "facts": load_global_facts(user_id=user_id)}
 
 
 @app.put("/api/global-memory")
-def save_global_memory_fact(req: GlobalFactRequest, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+def save_global_memory_fact(
+    req: GlobalFactRequest,
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
     require_password(x_app_password)
+    user_id = require_user_id(x_user_id)
     key = req.key.strip()
     value = req.value.strip()
     if "=" in key and not value:
         key, value = key.split("=", 1)
-    return {"ok": True, "facts": upsert_global_fact(key, value)}
+    return {"ok": True, "facts": upsert_global_fact(key, value, user_id=user_id)}
 
 
 @app.delete("/api/global-memory/{key}")
-def remove_global_memory_fact(key: str, x_app_password: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+def remove_global_memory_fact(
+    key: str,
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
     require_password(x_app_password)
-    return {"ok": True, "facts": delete_global_fact(key)}
+    user_id = require_user_id(x_user_id)
+    return {"ok": True, "facts": delete_global_fact(key, user_id=user_id)}
 
 
 @app.get("/api/provider-probe/{provider}")

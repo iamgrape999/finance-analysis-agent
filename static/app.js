@@ -37,11 +37,21 @@ const passwordGate = document.getElementById("passwordGate");
 const protectedApp = document.getElementById("protectedApp");
 const mainWorkspace = document.getElementById("mainWorkspace");
 const passwordInput = document.getElementById("passwordInput");
+let passwordUserInput = document.getElementById("passwordUserInput");
 const passwordApiBaseInput = document.getElementById("passwordApiBaseInput");
 const passwordButton = document.getElementById("passwordButton");
 const passwordError = document.getElementById("passwordError");
+if (!passwordUserInput) {
+  passwordUserInput = document.createElement("input");
+  passwordUserInput.id = "passwordUserInput";
+  passwordUserInput.type = "text";
+  passwordUserInput.placeholder = "User ID，例如 hanli / cathy / user01";
+  passwordUserInput.autocomplete = "username";
+  passwordInput.parentNode.insertBefore(passwordUserInput, passwordInput);
+}
 
 const threadKey = "finance_agent_thread_id";
+const userIdKey = "finance_agent_user_id";
 const apiBaseKey = "finance_agent_api_base";
 const passwordKey = "finance_agent_app_password";
 const responseModeKey = "finance_agent_response_mode";
@@ -65,8 +75,10 @@ const responsePresets = {
     providerOrder: ""
   }
 };
-let threadId = localStorage.getItem(threadKey) || makeThreadId();
-localStorage.setItem(threadKey, threadId);
+let userId = sanitizeUserId(localStorage.getItem(userIdKey) || "");
+passwordUserInput.value = userId;
+let threadId = localStorage.getItem(threadStorageKey()) || makeThreadId();
+localStorage.setItem(threadStorageKey(), threadId);
 threadInput.value = threadId;
 apiBaseInput.value = localStorage.getItem(apiBaseKey) || "";
 passwordApiBaseInput.value = apiBaseInput.value;
@@ -78,6 +90,14 @@ responseModeInput.value = localStorage.getItem(responseModeKey) || "fast";
 function makeThreadId() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   return `WEB_${stamp}_${crypto.randomUUID().slice(0, 6)}`;
+}
+
+function sanitizeUserId(value) {
+  return String(value || "").trim().replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80);
+}
+
+function threadStorageKey() {
+  return `${threadKey}_${userId || "default"}`;
 }
 
 function log(message, level = "INFO") {
@@ -134,6 +154,9 @@ function authHeaders(extra = {}) {
   const headers = { ...extra };
   if (appPassword) {
     headers["X-App-Password"] = appPassword;
+  }
+  if (userId) {
+    headers["X-User-Id"] = userId;
   }
   return headers;
 }
@@ -239,6 +262,12 @@ function collectModelOverrides() {
 
 async function checkHealth() {
   try {
+    if (!userId) {
+      setUnlocked(false);
+      passwordError.textContent = "請先輸入 User ID，系統會依 User ID 隔離歷史對話與全域記憶。";
+      log("missing user id", "WARN");
+      return;
+    }
     passwordButton.disabled = true;
     passwordButton.textContent = "連線中";
     const res = await fetch(apiUrl("/api/health"), { headers: authHeaders() });
@@ -255,6 +284,12 @@ async function checkHealth() {
       log(`health failed: HTTP ${res.status}`, "FAIL");
       return;
     }
+    if (data.user_required !== true || data.user_id !== userId) {
+      setUnlocked(false);
+      passwordError.textContent = "後端尚未更新到 User ID 隔離版本，請重啟本機 uvicorn 或重新部署 Render 後再測。";
+      log(`backend user scope mismatch; expected=${userId} got=${data.user_id || "none"} user_required=${data.user_required}`, "FAIL");
+      return;
+    }
     providerReadiness = data.providers || {};
     modelDefaults = data.model_defaults || {};
     if (!data.password_required) {
@@ -266,7 +301,7 @@ async function checkHealth() {
     statusEl.textContent = ready.length ? `已連線：${ready.join(", ")}` : "尚未設定模型金鑰";
     statusEl.classList.toggle("warn", ready.length === 0);
     setUnlocked(true);
-    log(`health ok; providers=${ready.join(", ") || "none"}`, ready.length ? "OK" : "WARN");
+    log(`health ok; user=${data.user_id}; scope=${data.storage_scope || "unknown"}; providers=${ready.join(", ") || "none"}`, ready.length ? "OK" : "WARN");
     if (providerReadiness.fireworks) {
       loadFireworksModels();
     }
@@ -335,7 +370,7 @@ async function loadThread(threadIdToLoad) {
     }
     threadId = threadIdToLoad;
     threadInput.value = threadId;
-    localStorage.setItem(threadKey, threadId);
+    localStorage.setItem(threadStorageKey(), threadId);
     renderStoredMessages(data);
     loadThreads();
     log(`loaded thread: ${threadId}`, "OK");
@@ -359,7 +394,7 @@ async function deleteThread(threadIdToDelete) {
     if (threadIdToDelete === threadId) {
       threadId = makeThreadId();
       threadInput.value = threadId;
-      localStorage.setItem(threadKey, threadId);
+      localStorage.setItem(threadStorageKey(), threadId);
       messages.innerHTML = "";
       addMessage("assistant", `已刪除原 Thread，並切換新 Thread：${threadId}`);
     }
@@ -547,7 +582,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
   if (firstProvider && providerReadiness[firstProvider] === false) {
     log(`${firstProvider} is selected first but not connected; backend will fail over to the next ready provider`, "WARN");
   }
-  log(`calling ${endpoint}; thread=${threadId}`, "CALL");
+  log(`calling ${endpoint}; user=${userId}; thread=${threadId}`, "CALL");
 
   try {
     const started = performance.now();
@@ -634,7 +669,7 @@ closeLogButton.addEventListener("click", () => {
 threadInput.addEventListener("change", () => {
   threadId = threadInput.value.trim() || makeThreadId();
   threadInput.value = threadId;
-  localStorage.setItem(threadKey, threadId);
+  localStorage.setItem(threadStorageKey(), threadId);
   log(`thread updated: ${threadId}`, "DEBUG");
   loadThread(threadId);
 });
@@ -659,7 +694,7 @@ selfTestButton.addEventListener("click", async () => {
 newThreadButton.addEventListener("click", () => {
   threadId = makeThreadId();
   threadInput.value = threadId;
-  localStorage.setItem(threadKey, threadId);
+  localStorage.setItem(threadStorageKey(), threadId);
   messages.innerHTML = "";
   addMessage("assistant", `已切換新 Thread：${threadId}`);
   log(`new thread: ${threadId}`, "DEBUG");
@@ -713,6 +748,23 @@ globalMemoryList.addEventListener("click", (event) => {
 
 passwordButton.addEventListener("click", () => {
   syncApiBaseFromLogin();
+  const nextUserId = sanitizeUserId(passwordUserInput.value);
+  if (!nextUserId) {
+    passwordError.textContent = "請輸入 User ID，避免多人共用同一份對話紀錄。";
+    log("login blocked: missing user id", "WARN");
+    return;
+  }
+  const userChanged = nextUserId !== userId;
+  userId = nextUserId;
+  passwordUserInput.value = userId;
+  localStorage.setItem(userIdKey, userId);
+  if (userChanged) {
+    threadId = localStorage.getItem(threadStorageKey()) || makeThreadId();
+    localStorage.setItem(threadStorageKey(), threadId);
+    threadInput.value = threadId;
+    messages.innerHTML = "";
+    addMessage("assistant", `已切換使用者：${userId}。歷史對話與全域記憶只會顯示此使用者的資料。`);
+  }
   appPassword = passwordInput.value;
   localStorage.setItem(passwordKey, appPassword);
   passwordError.textContent = "";
@@ -720,6 +772,12 @@ passwordButton.addEventListener("click", () => {
 });
 
 passwordInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    passwordButton.click();
+  }
+});
+
+passwordUserInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     passwordButton.click();
   }
