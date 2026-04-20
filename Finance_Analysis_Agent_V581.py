@@ -70,6 +70,12 @@ AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "openrouter,fireworks,g
 AGENT_PROVIDER_DISABLE = os.getenv("AGENT_PROVIDER_DISABLE", "").lower()
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 REQUEST_TIMEOUT_SEC = int(os.getenv("REQUEST_TIMEOUT_SEC", "120"))
+TOKEN_EST_RATIO = float(os.getenv("TOKEN_EST_RATIO", "0.5"))
+MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "9000"))
+MAX_USER_MESSAGE_CHARS = int(os.getenv("MAX_USER_MESSAGE_CHARS", "20000"))
+MAX_HISTORY_TURN_CHARS = int(os.getenv("MAX_HISTORY_TURN_CHARS", "800"))
+MAX_SUMMARY_CHARS = int(os.getenv("MAX_SUMMARY_CHARS", "1200"))
+MAX_GLOBAL_MEMORY_CHARS = int(os.getenv("MAX_GLOBAL_MEMORY_CHARS", "1600"))
 
 SYSTEM_POLICY = (
     "你是 CathyChang AI，請用繁體中文回答。"
@@ -185,6 +191,22 @@ def strip_redundant(text: str, max_len: int = 200_000) -> str:
     out = re.sub(r"[ \u3000]+", " ", out)
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
+
+
+def token_est(text: Any) -> int:
+    try:
+        return max(1, int(len(str(text or "")) * TOKEN_EST_RATIO))
+    except Exception:
+        return 1
+
+
+def _clip_text(text: str, max_chars: int, label: str = "") -> str:
+    text = str(text or "")
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    suffix = f"\n\n[系統註記] {label or '內容'}已因長度限制截斷。"
+    keep = max(0, int(max_chars) - len(suffix))
+    return text[:keep].rstrip() + suffix
 
 
 def clean_model_output(text: str) -> str:
@@ -682,7 +704,7 @@ def route_generate(prompt: str, max_tokens: int = MAX_OUTPUT_TOKENS, temperature
     )
 
 
-def _build_context(
+def _build_context_legacy(
     adapter: MemoryAdapter,
     user_text: str,
     history_turns: int,
@@ -719,6 +741,78 @@ def _build_context(
                 blocks.append("[最近對話]\n" + "\n".join(lines))
     blocks.append("[本輪使用者問題]\n" + user_text)
     return "\n\n".join(blocks)
+
+
+def _build_context(
+    adapter: MemoryAdapter,
+    user_text: str,
+    history_turns: int,
+    use_history: bool,
+    use_summary: bool,
+    user_id: Optional[str] = None,
+) -> str:
+    blocks: List[Tuple[str, str]] = []
+
+    global_facts = load_global_facts(user_id)
+    if global_facts:
+        lines = []
+        for key in sorted(global_facts.keys()):
+            value = global_facts[key]
+            if isinstance(value, dict):
+                lines.append(f"{key}={value.get('value', '')}")
+            else:
+                lines.append(f"{key}={value}")
+        if lines:
+            blocks.append(("global", _clip_text("[全域記憶]\n" + "\n".join(lines), MAX_GLOBAL_MEMORY_CHARS, "全域記憶")))
+
+    if use_summary:
+        summary = adapter.load_summary()
+        if summary:
+            blocks.append(("summary", "[對話摘要]\n" + _clip_text(summary, MAX_SUMMARY_CHARS, "對話摘要")))
+
+    if use_history:
+        turns = adapter.get_recent_turns(history_turns)
+        if turns:
+            lines = []
+            for turn in turns:
+                role = str(turn.get("role", "")).upper()
+                content = _clip_text(str(turn.get("content", "")), MAX_HISTORY_TURN_CHARS, "單則歷史對話")
+                if role and content:
+                    lines.append(f"{role}: {content}")
+            if lines:
+                blocks.append(("history", "[最近對話]\n" + "\n".join(lines)))
+
+    user_text = _clip_text(user_text, MAX_USER_MESSAGE_CHARS, "本輪使用者訊息")
+    blocks.append(("user", "[本輪使用者問題]\n" + user_text))
+
+    def _join(items: List[Tuple[str, str]]) -> str:
+        return "\n\n".join(text for _, text in items if text.strip())
+
+    prompt = _join(blocks)
+    if token_est(prompt) <= MAX_PROMPT_TOKENS:
+        return prompt
+
+    compacted = [item for item in blocks if item[0] != "history"]
+    prompt = _join(compacted)
+    if token_est(prompt) <= MAX_PROMPT_TOKENS:
+        return "[系統註記] 最近對話因 token 預算限制已省略，請優先回答本輪問題。\n\n" + prompt
+
+    compacted = [item for item in compacted if item[0] != "summary"]
+    prompt = _join(compacted)
+    if token_est(prompt) <= MAX_PROMPT_TOKENS:
+        return "[系統註記] 對話摘要與最近對話因 token 預算限制已省略，請優先回答本輪問題。\n\n" + prompt
+
+    compacted = [item for item in compacted if item[0] != "global"]
+    prompt = _join(compacted)
+    if token_est(prompt) <= MAX_PROMPT_TOKENS:
+        return "[系統註記] 全域記憶、摘要與最近對話因 token 預算限制已省略，請優先回答本輪問題。\n\n" + prompt
+
+    max_user_chars = max(1000, int(MAX_PROMPT_TOKENS / max(TOKEN_EST_RATIO, 0.1)) - 800)
+    return (
+        "[系統註記] 使用者訊息過長，已保留前段內容並省略歷史脈絡；若需要完整分析，請分段貼上。\n\n"
+        + "[本輪使用者問題]\n"
+        + _clip_text(user_text, max_user_chars, "本輪使用者訊息")
+    )
 
 
 def _update_summary(adapter: MemoryAdapter) -> None:

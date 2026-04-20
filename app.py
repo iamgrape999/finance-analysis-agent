@@ -36,6 +36,7 @@ APP_NAME = os.getenv("APP_NAME", "CathyChang AI")
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
 APP_USERS_RAW = os.getenv("APP_USERS", "").strip()
+MIN_CHAT_MAX_TOKENS = int(os.getenv("MIN_CHAT_MAX_TOKENS", "3000"))
 
 app = FastAPI(title=APP_NAME)
 
@@ -177,7 +178,7 @@ def chat(
     return _chat_impl(req, user_id=user_id)
 
 
-def _chat_impl(req: ChatRequest, user_id: str) -> ChatResponse:
+def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) -> ChatResponse:
     previous_provider_order = os.environ.get("AGENT_PROVIDER_ORDER")
     model_env_keys = {
         "openrouter": "OPENROUTER_MODEL",
@@ -195,12 +196,15 @@ def _chat_impl(req: ChatRequest, user_id: str) -> ChatResponse:
             env_key = model_env_keys.get(provider)
             if env_key and model.strip():
                 os.environ[env_key] = model.strip()
+        effective_max_tokens = req.max_tokens
+        if enforce_min_tokens:
+            effective_max_tokens = max(MIN_CHAT_MAX_TOKENS, int(effective_max_tokens or MIN_CHAT_MAX_TOKENS))
         result = chat_once_detailed(
             memory=None,
             THREAD_ID=req.thread_id,
             user_text_or_prompt=req.message,
             print_reply=False,
-            max_tokens_override=req.max_tokens,
+            max_tokens_override=effective_max_tokens,
             temperature_override=req.temperature,
             use_history=req.use_history,
             history_turns=req.history_turns,
@@ -242,7 +246,7 @@ def selftest(
     req.message = "SelfTest：請只回覆 OK，並用繁體中文。"
     req.max_tokens = req.max_tokens or 256
     req.temperature = 0.0
-    return _chat_impl(req, user_id=user_id)
+    return _chat_impl(req, user_id=user_id, enforce_min_tokens=False)
 
 
 @app.get("/api/threads/{thread_id}/messages", response_model=List[MessageRecord])

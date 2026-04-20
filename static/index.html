@@ -61,15 +61,18 @@
           <label>
             回覆模式
             <select id="responseModeInput">
-              <option value="fast" selected>快速短答（預設：512 tokens，低延遲）</option>
-              <option value="stable">穩定聊天（1024 tokens，保留較多上下文）</option>
-              <option value="deep">深度分析（4096 tokens，較慢但較完整）</option>
+              <option value="fast" selected>快速短答（3000 tokens，Fireworks/Groq 優先）</option>
+              <option value="stable">穩定聊天（4096 tokens，Fireworks/OpenRouter 優先）</option>
+              <option value="deep">深度分析（6000 tokens，OpenRouter/Fireworks 優先）</option>
             </select>
           </label>
           <label>
             Provider 順序
             <select id="providerOrderInput">
               <option value="">自動</option>
+              <option value="fireworks,groq,openrouter,gemini,aws">快速短答：fireworks/groq 優先</option>
+              <option value="fireworks,openrouter,groq,gemini,aws">穩定聊天：fireworks/openrouter 優先</option>
+              <option value="openrouter,fireworks,gemini,groq,aws">深度分析：openrouter/fireworks 優先</option>
               <option value="groq,fireworks,openrouter,gemini,cloudflare,aws">快速短答：groq/fireworks 優先</option>
               <option value="openrouter,fireworks,gemini,cloudflare,groq,aws">openrouter 優先</option>
               <option value="fireworks,openrouter,gemini,cloudflare,groq,aws">fireworks 優先</option>
@@ -208,7 +211,7 @@
           </label>
           <label>
             Max tokens
-            <input id="maxTokensInput" type="number" value="512" min="128" max="12000" />
+            <input id="maxTokensInput" type="number" value="3000" min="3000" max="12000" />
           </label>
           <label>
             Temperature

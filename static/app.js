@@ -58,21 +58,21 @@ const responseModeKey = "finance_agent_response_mode";
 const responsePresets = {
   fast: {
     label: "快速短答",
-    maxTokens: 512,
+    maxTokens: 3000,
     historyTurns: 2,
-    providerOrder: ""
+    providerOrder: "fireworks,groq,openrouter,gemini,aws"
   },
   stable: {
     label: "穩定聊天",
-    maxTokens: 1024,
-    historyTurns: 6,
-    providerOrder: ""
+    maxTokens: 4096,
+    historyTurns: 4,
+    providerOrder: "fireworks,openrouter,groq,gemini,aws"
   },
   deep: {
     label: "深度分析",
-    maxTokens: 4096,
-    historyTurns: 8,
-    providerOrder: ""
+    maxTokens: 6000,
+    historyTurns: 6,
+    providerOrder: "openrouter,fireworks,gemini,groq,aws"
   }
 };
 let userId = sanitizeUserId(localStorage.getItem(userIdKey) || "");
@@ -171,7 +171,7 @@ function applyResponsePreset(shouldLog = true) {
   providerOrderInput.value = preset.providerOrder;
   localStorage.setItem(responseModeKey, responseModeInput.value);
   if (shouldLog) {
-    log(`response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}; provider_order=backend`, "DEBUG");
+    log(`response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}; provider_order=${preset.providerOrder || "backend"}`, "DEBUG");
   }
 }
 
@@ -218,7 +218,6 @@ function addMessage(role, text, meta = {}) {
   if (usageText) metaParts.push(`tokens: ${usageText}`);
   if (meta.latency_s !== undefined && meta.latency_s !== null) metaParts.push(`time=${meta.latency_s}s`);
   if (meta.provider_attempts?.length) metaParts.push(`attempts=${meta.provider_attempts.join(">")}`);
-  if (meta.failover_errors?.length) metaParts.push(`failover=${meta.failover_errors.map((item) => `${item.provider}: ${item.error}`).join(" ; ")}`);
   if (metaParts.length) {
     const metaEl = document.createElement("div");
     metaEl.className = "message-meta";
