@@ -50,19 +50,19 @@ const responsePresets = {
     label: "快速短答",
     maxTokens: 512,
     historyTurns: 2,
-    providerOrder: "groq,fireworks,openrouter,gemini,cloudflare,aws"
+    providerOrder: ""
   },
   stable: {
     label: "穩定聊天",
     maxTokens: 1024,
     historyTurns: 6,
-    providerOrder: "fireworks,openrouter,gemini,cloudflare,groq,aws"
+    providerOrder: ""
   },
   deep: {
     label: "深度分析",
     maxTokens: 4096,
     historyTurns: 8,
-    providerOrder: "fireworks,openrouter,gemini,cloudflare,groq,aws"
+    providerOrder: ""
   }
 };
 let threadId = localStorage.getItem(threadKey) || makeThreadId();
@@ -148,8 +148,18 @@ function applyResponsePreset(shouldLog = true) {
   providerOrderInput.value = preset.providerOrder;
   localStorage.setItem(responseModeKey, responseModeInput.value);
   if (shouldLog) {
-    log(`response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}`, "DEBUG");
+    log(`response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}; provider_order=backend`, "DEBUG");
   }
+}
+
+function isMobileLayout() {
+  return window.matchMedia("(max-width: 720px)").matches;
+}
+
+function collapseMobilePanels() {
+  if (!isMobileLayout()) return;
+  mainWorkspace.classList.add("sidebar-collapsed");
+  logPanel.classList.remove("is-open");
 }
 
 function setUnlocked(unlocked) {
@@ -530,6 +540,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
   }
 
   addMessage("user", message);
+  collapseMobilePanels();
   input.value = "";
   setBusy(true);
   const firstProvider = (providerOrderInput.value || "").split(",")[0]?.trim();
@@ -601,6 +612,7 @@ input.addEventListener("keydown", (event) => {
 
 toggleSidebarButton.addEventListener("click", () => {
   mainWorkspace.classList.toggle("sidebar-collapsed");
+  logPanel.classList.remove("is-open");
 });
 
 toggleSettingsButton.addEventListener("click", () => {
@@ -609,6 +621,9 @@ toggleSettingsButton.addEventListener("click", () => {
 });
 
 toggleLogButton.addEventListener("click", () => {
+  if (isMobileLayout()) {
+    mainWorkspace.classList.add("sidebar-collapsed");
+  }
   logPanel.classList.toggle("is-open");
 });
 
@@ -713,4 +728,13 @@ passwordInput.addEventListener("keydown", (event) => {
 log("UI initialized", "STEP");
 setUnlocked(false);
 applyResponsePreset(false);
+if (isMobileLayout()) {
+  mainWorkspace.classList.add("sidebar-collapsed");
+}
+window.addEventListener("resize", () => {
+  if (isMobileLayout()) {
+    mainWorkspace.classList.add("sidebar-collapsed");
+    logPanel.classList.remove("is-open");
+  }
+});
 checkHealth();

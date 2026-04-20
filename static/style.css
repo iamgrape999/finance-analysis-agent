@@ -5,6 +5,7 @@
 body {
   margin: 0;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   color: #18212f;
   background: #eef2f7;
@@ -14,6 +15,7 @@ body {
 .app {
   width: 100%;
   height: 100vh;
+  height: 100dvh;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -21,6 +23,9 @@ body {
 }
 
 .topbar {
+  position: relative;
+  z-index: 40;
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   gap: 16px;
@@ -447,10 +452,38 @@ button.secondary {
 }
 
 @media (max-width: 720px) {
-  .topbar,
+  .topbar {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: calc(10px + env(safe-area-inset-top)) 10px 10px;
+  }
+
+  .topbar h1 {
+    font-size: 18px;
+  }
+
+  .eyebrow {
+    font-size: 12px;
+  }
+
+  .status {
+    display: none;
+  }
+
+  .utility-button {
+    min-height: 34px;
+    padding: 6px 9px;
+    font-size: 13px;
+  }
+
+  .icon-button {
+    position: relative;
+    z-index: 45;
+  }
+
   .composer {
     grid-template-columns: 1fr;
-    flex-direction: column;
     align-items: stretch;
   }
 
@@ -475,10 +508,10 @@ button.secondary {
 
   .settings {
     position: fixed;
-    top: 86px;
+    top: calc(66px + env(safe-area-inset-top));
     left: 10px;
     bottom: 92px;
-    z-index: 12;
+    z-index: 20;
     width: min(320px, calc(100vw - 20px));
     border: 1px solid #cdd6e1;
     border-radius: 8px;
@@ -490,9 +523,10 @@ button.secondary {
   }
 
   .log-panel {
-    top: 86px;
+    top: calc(66px + env(safe-area-inset-top));
     bottom: 92px;
     right: 10px;
+    z-index: 19;
   }
 
   .message {
