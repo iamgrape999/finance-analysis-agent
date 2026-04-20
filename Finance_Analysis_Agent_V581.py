@@ -70,6 +70,7 @@ AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "openrouter,cloudflare,
 AGENT_PROVIDER_DISABLE = os.getenv("AGENT_PROVIDER_DISABLE", "").lower()
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 REQUEST_TIMEOUT_SEC = int(os.getenv("REQUEST_TIMEOUT_SEC", "120"))
+OPENROUTER_TIMEOUT_SEC = int(os.getenv("OPENROUTER_TIMEOUT_SEC", "45"))
 TOKEN_EST_RATIO = float(os.getenv("TOKEN_EST_RATIO", "0.5"))
 MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "9000"))
 MAX_USER_MESSAGE_CHARS = int(os.getenv("MAX_USER_MESSAGE_CHARS", "20000"))
@@ -436,6 +437,55 @@ def _extract_openai_compatible_text(data: Dict[str, Any]) -> str:
     return clean_model_output(str(content))
 
 
+def _summarize_openrouter_response(data: Any) -> str:
+    """
+    Keep the summary short so it can safely surface in Log Panel failover text.
+    """
+    try:
+        if not isinstance(data, dict):
+            return f"type={type(data).__name__}"
+
+        keys = sorted(list(data.keys()))
+        parts = [f"keys={keys}"]
+        choices = data.get("choices")
+        if isinstance(choices, list):
+            parts.append(f"choices_len={len(choices)}")
+            choice_summaries: List[str] = []
+            for idx, choice in enumerate(choices[:2]):
+                if not isinstance(choice, dict):
+                    choice_summaries.append(f"{idx}:type={type(choice).__name__}")
+                    continue
+                c_keys = sorted(list(choice.keys()))
+                msg = choice.get("message")
+                msg_keys = sorted(list(msg.keys())) if isinstance(msg, dict) else []
+                content = msg.get("content") if isinstance(msg, dict) else choice.get("text")
+                if isinstance(content, list):
+                    content_desc = f"list[{len(content)}]"
+                elif isinstance(content, dict):
+                    content_desc = f"dict[{sorted(list(content.keys()))}]"
+                elif isinstance(content, str):
+                    content_desc = f"str[{len(content)}]"
+                elif content is None:
+                    content_desc = "none"
+                else:
+                    content_desc = type(content).__name__
+                choice_summaries.append(
+                    f"{idx}:keys={c_keys};message_keys={msg_keys};content={content_desc}"
+                )
+            if choice_summaries:
+                parts.append("choices=" + " | ".join(choice_summaries))
+        else:
+            parts.append(f"choices_type={type(choices).__name__}")
+
+        if "usage" in data:
+            usage = data.get("usage")
+            if isinstance(usage, dict):
+                parts.append(f"usage_keys={sorted(list(usage.keys()))}")
+        return "; ".join(parts)
+    except Exception as exc:
+        return f"summary_error={type(exc).__name__}:{exc}"
+
+
 def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
     model = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL).strip() or OPENROUTER_MODEL
     url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1") + "/chat/completions"
@@ -456,13 +506,16 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelRe
         "max_tokens": int(max_tokens),
         "temperature": float(temperature),
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SEC)
+    timeout_sec = max(10, min(int(REQUEST_TIMEOUT_SEC), int(OPENROUTER_TIMEOUT_SEC)))
+    resp = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
     if resp.status_code >= 400:
         raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
     text = _extract_openai_compatible_text(data)
     if not text:
-        raise RuntimeError("OpenRouter returned empty content")
+        summary = _summarize_openrouter_response(data)
+        debug_log("openrouter", f"[EMPTY CONTENT] {summary}")
+        raise RuntimeError(f"OpenRouter returned empty content; {summary}")
     return ModelReply(text=text, meta={"provider": "openrouter", "model": data.get("model", model), "usage": data.get("usage")})
 
 
