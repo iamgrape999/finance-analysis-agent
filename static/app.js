@@ -62,19 +62,19 @@ const responsePresets = {
     label: "快速短答",
     maxTokens: 768,
     historyTurns: 2,
-    providerOrder: "openrouter,groq,cloudflare,gemini,aws,fireworks"
+    providerOrder: "openrouter,groq,cloudflare,aws,fireworks,gemini"
   },
   stable: {
     label: "穩定聊天",
     maxTokens: 2048,
     historyTurns: 4,
-    providerOrder: "openrouter,gemini,cloudflare,groq,aws,fireworks"
+    providerOrder: "openrouter,cloudflare,groq,aws,fireworks,gemini"
   },
   deep: {
     label: "深度分析",
     maxTokens: 4096,
     historyTurns: 6,
-    providerOrder: "openrouter,gemini,aws,cloudflare,groq,fireworks"
+    providerOrder: "openrouter,aws,cloudflare,groq,fireworks,gemini"
   }
 };
 let userId = sanitizeUserId(localStorage.getItem(userIdKey) || "");
@@ -170,12 +170,12 @@ function currentResponsePreset() {
 
 function mobileProviderOrderFor(modeKey) {
   if (modeKey === "deep") {
-    return "openrouter,gemini,aws,fireworks,cloudflare,groq";
+    return "openrouter,aws,fireworks,cloudflare,groq,gemini";
   }
   if (modeKey === "stable") {
-    return "openrouter,gemini,fireworks,aws";
+    return "openrouter,fireworks,aws,gemini";
   }
-  return "openrouter,gemini,fireworks";
+  return "openrouter,fireworks,gemini";
 }
 
 function chatRequestTimeoutMsForMode(modeKey) {

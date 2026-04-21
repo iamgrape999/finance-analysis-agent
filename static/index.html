@@ -70,13 +70,13 @@
             Provider 順序
             <select id="providerOrderInput">
               <option value="">自動</option>
-              <option value="groq,openrouter,cloudflare,gemini,aws,fireworks">快速短答：groq/openrouter 優先，fireworks 最後</option>
-              <option value="openrouter,cloudflare,groq,gemini,aws,fireworks">穩定聊天：openrouter/cloudflare/groq 優先，fireworks 最後</option>
-              <option value="openrouter,gemini,cloudflare,groq,aws,fireworks">深度分析：openrouter/gemini 優先，fireworks 最後</option>
-              <option value="openrouter,cloudflare,groq,gemini,aws,fireworks">openrouter 優先，fireworks 最後</option>
-              <option value="cloudflare,openrouter,groq,gemini,aws,fireworks">cloudflare 優先，fireworks 最後</option>
-              <option value="groq,openrouter,cloudflare,gemini,aws,fireworks">groq 優先，fireworks 最後</option>
-              <option value="fireworks,openrouter,gemini,cloudflare,groq,aws">fireworks 優先（會消耗 Fireworks credit）</option>
+              <option value="openrouter,groq,cloudflare,aws,fireworks,gemini">快速短答：Gemini 最後</option>
+              <option value="openrouter,cloudflare,groq,aws,fireworks,gemini">穩定聊天：Gemini 最後</option>
+              <option value="openrouter,aws,cloudflare,groq,fireworks,gemini">深度分析：Gemini 最後</option>
+              <option value="openrouter,cloudflare,groq,aws,fireworks,gemini">openrouter 優先，Gemini 最後</option>
+              <option value="cloudflare,openrouter,groq,aws,fireworks,gemini">cloudflare 優先，Gemini 最後</option>
+              <option value="groq,openrouter,cloudflare,aws,fireworks,gemini">groq 優先，Gemini 最後</option>
+              <option value="fireworks,openrouter,cloudflare,groq,aws,gemini">fireworks 優先（會消耗 Fireworks credit；Gemini 最後）</option>
             </select>
           </label>
           <label>
@@ -121,21 +121,11 @@
             Gemini 模型
             <select id="geminiModelInput">
               <option value="">使用 .env 預設</option>
-              <optgroup label="Gemini 3">
-                <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
-                <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-              </optgroup>
-              <optgroup label="Gemini 2.5">
-                <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+              <optgroup label="Gemini Flash / Flash-Lite">
+                <option value="gemini-3.0-flash">gemini-3.0-flash</option>
+                <option value="gemini-3.0-flash-lite">gemini-3.0-flash-lite</option>
                 <option value="gemini-2.5-flash">gemini-2.5-flash</option>
                 <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-                <option value="gemini-2.5-flash-preview-09-2025">gemini-2.5-flash-preview-09-2025</option>
-                <option value="gemini-2.5-flash-lite-preview-09-2025">gemini-2.5-flash-lite-preview-09-2025</option>
-              </optgroup>
-              <optgroup label="Gemini 2.0 / Legacy">
-              <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-              <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-              <option value="gemini-2.0-flash">gemini-2.0-flash</option>
               </optgroup>
             </select>
           </label>
