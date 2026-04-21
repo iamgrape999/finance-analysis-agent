@@ -69,6 +69,7 @@ class ChatRequest(BaseModel):
     use_history: bool = True
     history_turns: int = Field(default=8, ge=0, le=20)
     response_mode: str = Field(default="fast", pattern="^(fast|stable|deep)$")
+    disable_auto_continue: bool = False
     provider_order: Optional[str] = Field(default=None, max_length=120)
     model_overrides: Dict[str, str] = Field(default_factory=dict)
 
@@ -229,6 +230,7 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             history_turns=req.history_turns,
             user_id=user_id,
             response_mode=req.response_mode,
+            disable_auto_continue=req.disable_auto_continue,
         )
     except Exception as exc:
         traceback.print_exc()
@@ -238,6 +240,7 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             "thread_id": req.thread_id,
             "provider_order": effective_provider_order if 'effective_provider_order' in locals() else resolve_provider_order(),
             "response_mode": req.response_mode,
+            "disable_auto_continue": req.disable_auto_continue,
             "model_overrides": list((req.model_overrides or {}).keys()),
         }
         raise HTTPException(

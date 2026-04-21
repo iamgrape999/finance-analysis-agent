@@ -170,12 +170,12 @@ function currentResponsePreset() {
 
 function mobileProviderOrderFor(modeKey) {
   if (modeKey === "deep") {
-    return "openrouter,gemini,aws,cloudflare,groq,fireworks";
+    return "openrouter,gemini,aws,fireworks,cloudflare,groq";
   }
   if (modeKey === "stable") {
-    return "openrouter,gemini,cloudflare,groq,aws,fireworks";
+    return "openrouter,gemini,fireworks,aws";
   }
-  return "openrouter,groq,cloudflare,gemini,aws,fireworks";
+  return "openrouter,gemini,fireworks";
 }
 
 function chatRequestTimeoutMsForMode(modeKey) {
@@ -267,6 +267,8 @@ function logProviderTrace(providerTrace) {
       `bytes=${item.estimated_request_bytes ?? "?"}`,
       `elapsed=${item.elapsed_ms ?? 0}ms`
     ];
+    if (item.attempt_timeout_sec !== undefined) parts.push(`attempt_timeout=${item.attempt_timeout_sec}s`);
+    if (item.remaining_budget_sec !== undefined) parts.push(`budget_left=${item.remaining_budget_sec}s`);
     if (item.reason) parts.push(`reason=${item.reason}`);
     log(parts.join(" | "), item.status === "ok" ? "TRACE" : "WARN");
   }
@@ -636,6 +638,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
     const effectiveMaxTokens = Number(maxTokensInput.value || preset.maxTokens);
     const effectiveHistoryTurns = isMobile ? Math.min(Number(preset.historyTurns || 2), 2) : Number(preset.historyTurns || 2);
     const requestTimeoutMs = chatRequestTimeoutMsForMode(responseModeInput.value);
+    const disableAutoContinue = isMobile;
     const controller = new AbortController();
     timeoutId = window.setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), requestTimeoutMs);
     const res = await fetch(apiUrl(endpoint), {
@@ -650,6 +653,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
         use_history: true,
         history_turns: effectiveHistoryTurns,
         response_mode: responseModeInput.value,
+        disable_auto_continue: disableAutoContinue,
         provider_order: effectiveProviderOrder,
         model_overrides: collectModelOverrides()
       })
