@@ -55,7 +55,7 @@ const userIdKey = "finance_agent_user_id";
 const apiBaseKey = "finance_agent_api_base";
 const passwordKey = "finance_agent_app_password";
 const responseModeKey = "finance_agent_response_mode";
-const CHAT_REQUEST_TIMEOUT_MS = 60000;
+const CHAT_REQUEST_TIMEOUT_MS = 90000;
 const responsePresets = {
   fast: {
     label: "快速短答",
@@ -599,6 +599,10 @@ async function sendMessage(message, endpoint = "/api/chat") {
   try {
     const started = performance.now();
     const preset = currentResponsePreset();
+    const isMobile = isMobileLayout();
+    const effectiveMaxTokens = isMobile ? Math.min(Number(maxTokensInput.value || preset.maxTokens), 3000) : Number(maxTokensInput.value || preset.maxTokens);
+    const effectiveHistoryTurns = isMobile ? Math.min(Number(preset.historyTurns || 2), 2) : Number(preset.historyTurns || 2);
+    const effectiveProviderOrder = isMobile ? mobileProviderOrderFor(responseModeInput.value) : (providerOrderInput.value || null);
     const controller = new AbortController();
     timeoutId = window.setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), CHAT_REQUEST_TIMEOUT_MS);
     const res = await fetch(apiUrl(endpoint), {
@@ -608,11 +612,11 @@ async function sendMessage(message, endpoint = "/api/chat") {
       body: JSON.stringify({
         thread_id: threadId,
         message,
-        max_tokens: Number(maxTokensInput.value || preset.maxTokens),
+        max_tokens: effectiveMaxTokens,
         temperature: Number(temperatureInput.value || 0.2),
         use_history: true,
-        history_turns: preset.historyTurns,
-        provider_order: providerOrderInput.value || null,
+        history_turns: effectiveHistoryTurns,
+        provider_order: effectiveProviderOrder,
         model_overrides: collectModelOverrides()
       })
     });
@@ -645,7 +649,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
       ? "請求逾時，已中止這次對話。請稍後再試，或改用更快的回覆模式。"
       : friendlyNetworkError(err);
     addMessage("assistant", `發生錯誤：${rawMessage}`);
-    log(`chat failed: ${err?.name || "Error"} ${err?.message || String(err)}`, "FAIL");
+    log(`chat failed: ${err?.name || "Error"} ${err?.message || String(err)}; thread=${threadId}; provider_order=${providerOrderInput.value || "backend"}`, "FAIL");
   } finally {
     if (timeoutId !== null) {
       window.clearTimeout(timeoutId);

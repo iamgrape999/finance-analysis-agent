@@ -70,7 +70,8 @@ AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "openrouter,cloudflare,
 AGENT_PROVIDER_DISABLE = os.getenv("AGENT_PROVIDER_DISABLE", "").lower()
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 REQUEST_TIMEOUT_SEC = int(os.getenv("REQUEST_TIMEOUT_SEC", "120"))
-OPENROUTER_TIMEOUT_SEC = int(os.getenv("OPENROUTER_TIMEOUT_SEC", "45"))
+CHAT_PROVIDER_TIMEOUT_SEC = int(os.getenv("CHAT_PROVIDER_TIMEOUT_SEC", "18"))
+OPENROUTER_TIMEOUT_SEC = int(os.getenv("OPENROUTER_TIMEOUT_SEC", str(CHAT_PROVIDER_TIMEOUT_SEC)))
 TOKEN_EST_RATIO = float(os.getenv("TOKEN_EST_RATIO", "0.5"))
 MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "9000"))
 MAX_USER_MESSAGE_CHARS = int(os.getenv("MAX_USER_MESSAGE_CHARS", "20000"))
@@ -486,6 +487,15 @@ def _summarize_openrouter_response(data: Any) -> str:
         return f"summary_error={type(exc).__name__}:{exc}"
 
 
+def _chat_timeout(provider: str) -> int:
+    provider = (provider or "").strip().lower()
+    if provider == "openrouter":
+        candidate = OPENROUTER_TIMEOUT_SEC
+    else:
+        candidate = CHAT_PROVIDER_TIMEOUT_SEC
+    return max(10, min(int(REQUEST_TIMEOUT_SEC), int(candidate)))
+
+
 def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
     model = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL).strip() or OPENROUTER_MODEL
     url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1") + "/chat/completions"
@@ -506,7 +516,7 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelRe
         "max_tokens": int(max_tokens),
         "temperature": float(temperature),
     }
-    timeout_sec = max(10, min(int(REQUEST_TIMEOUT_SEC), int(OPENROUTER_TIMEOUT_SEC)))
+    timeout_sec = _chat_timeout("openrouter")
     resp = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
     if resp.status_code >= 400:
         raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text[:300]}")
@@ -532,7 +542,7 @@ def call_groq(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
         "max_tokens": min(int(max_tokens), 4096),
         "temperature": float(temperature),
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SEC)
+    resp = requests.post(url, headers=headers, json=payload, timeout=_chat_timeout("groq"))
     if resp.status_code >= 400:
         raise RuntimeError(f"Groq error {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
@@ -557,7 +567,7 @@ def call_fireworks(prompt: str, max_tokens: int, temperature: float) -> ModelRep
         "temperature": float(temperature),
         "stream": False,
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SEC)
+    resp = requests.post(url, headers=headers, json=payload, timeout=_chat_timeout("fireworks"))
     if resp.status_code >= 400:
         raise RuntimeError(
             f"Fireworks error {resp.status_code}: {resp.text[:300]} "
@@ -576,7 +586,7 @@ def list_fireworks_serverless_models(page_size: int = 100) -> List[Dict[str, Any
     url = f"{FIREWORKS_BASE_URL.replace('/inference/v1', '')}/v1/accounts/fireworks/models"
     headers = {"Authorization": f"Bearer {FIREWORKS_API_KEY}"}
     params = {"filter": "supports_serverless=true", "pageSize": int(page_size)}
-    resp = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT_SEC)
+    resp = requests.get(url, headers=headers, params=params, timeout=max(20, _chat_timeout("fireworks")))
     if resp.status_code >= 400:
         raise RuntimeError(f"Fireworks List Models error {resp.status_code}: {resp.text[:300]}")
     data = resp.json() or {}
@@ -632,7 +642,7 @@ def call_cloudflare(prompt: str, max_tokens: int, temperature: float) -> ModelRe
         "max_tokens": min(int(max_tokens), 4096),
         "temperature": float(temperature),
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SEC)
+    resp = requests.post(url, headers=headers, json=payload, timeout=_chat_timeout("cloudflare"))
     if resp.status_code >= 400:
         raise RuntimeError(f"Cloudflare error {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
@@ -688,7 +698,7 @@ def call_aws(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
     session = boto3.Session(region_name=AWS_REGION)
     client = session.client(
         "bedrock-runtime",
-        config=botocore.config.Config(connect_timeout=10, read_timeout=REQUEST_TIMEOUT_SEC),
+        config=botocore.config.Config(connect_timeout=10, read_timeout=_chat_timeout("aws")),
     )
     body = {
         "anthropic_version": "bedrock-2023-05-31",
@@ -894,7 +904,7 @@ def chat_once_detailed(
     use_summary: bool = True,
     summary_chars: int = 1800,
     user_id: Optional[str] = None,
-) -> str:
+) -> Dict[str, Any]:
     del min_tokens, summary_chars
     user_text = strip_redundant(user_text_or_prompt)
     if not user_text:
@@ -910,8 +920,14 @@ def chat_once_detailed(
         user_id=user_id,
     )
 
-    upsert_global_facts_from_text(user_text, user_id=user_id)
-    adapter.add_turn("user", user_text)
+    try:
+        upsert_global_facts_from_text(user_text, user_id=user_id)
+    except Exception as exc:
+        debug_log("memory", f"failed to upsert global facts: {type(exc).__name__}: {exc}")
+    try:
+        adapter.add_turn("user", user_text)
+    except Exception as exc:
+        debug_log("memory", f"failed to persist user turn: {type(exc).__name__}: {exc}")
     t0 = time.perf_counter()
     reply = route_generate(
         mask_pii(prompt),
@@ -922,8 +938,14 @@ def chat_once_detailed(
     assistant_text = strip_redundant(clean_model_output(reply.text))
     meta = dict(reply.meta or {})
     meta["latency_s"] = latency_s
-    adapter.add_turn("assistant", assistant_text, meta=meta)
-    _update_summary(adapter)
+    try:
+        adapter.add_turn("assistant", assistant_text, meta=meta)
+    except Exception as exc:
+        debug_log("memory", f"failed to persist assistant turn: {type(exc).__name__}: {exc}")
+    try:
+        _update_summary(adapter)
+    except Exception as exc:
+        debug_log("memory", f"failed to update summary: {type(exc).__name__}: {exc}")
 
     if print_reply:
         print(assistant_text)

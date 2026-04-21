@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import hmac
+import traceback
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
@@ -211,7 +212,18 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             user_id=user_id,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        traceback.print_exc()
+        error_context = {
+            "phase": "chat_once_detailed",
+            "user_id": user_id,
+            "thread_id": req.thread_id,
+            "provider_order": req.provider_order or resolve_provider_order(),
+            "model_overrides": list((req.model_overrides or {}).keys()),
+        }
+        raise HTTPException(
+            status_code=500,
+            detail=f"{type(exc).__name__}: {exc}; context={error_context}",
+        ) from exc
     finally:
         if req.provider_order:
             if previous_provider_order is None:
