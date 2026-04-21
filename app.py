@@ -37,7 +37,16 @@ APP_NAME = os.getenv("APP_NAME", "CathyChang AI")
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
 APP_USERS_RAW = os.getenv("APP_USERS", "").strip()
-MIN_CHAT_MAX_TOKENS = int(os.getenv("MIN_CHAT_MAX_TOKENS", "3000"))
+MODE_DEFAULT_MAX_TOKENS = {
+    "fast": int(os.getenv("FAST_MODE_MAX_TOKENS", "768")),
+    "stable": int(os.getenv("STABLE_MODE_MAX_TOKENS", "2048")),
+    "deep": int(os.getenv("DEEP_MODE_MAX_TOKENS", "4096")),
+}
+MODE_DEFAULT_PROVIDER_ORDER = {
+    "fast": os.getenv("FAST_MODE_PROVIDER_ORDER", "openrouter,groq,cloudflare,gemini,aws,fireworks"),
+    "stable": os.getenv("STABLE_MODE_PROVIDER_ORDER", "openrouter,gemini,cloudflare,groq,aws,fireworks"),
+    "deep": os.getenv("DEEP_MODE_PROVIDER_ORDER", "openrouter,gemini,aws,cloudflare,groq,fireworks"),
+}
 
 app = FastAPI(title=APP_NAME)
 
@@ -58,6 +67,7 @@ class ChatRequest(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     use_history: bool = True
     history_turns: int = Field(default=8, ge=0, le=20)
+    response_mode: str = Field(default="fast", pattern="^(fast|stable|deep)$")
     provider_order: Optional[str] = Field(default=None, max_length=120)
     model_overrides: Dict[str, str] = Field(default_factory=dict)
 
@@ -71,6 +81,8 @@ class ChatResponse(BaseModel):
     latency_s: Optional[float] = None
     provider_attempts: List[str] = Field(default_factory=list)
     failover_errors: List[Dict[str, str]] = Field(default_factory=list)
+    provider_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    context_sizes: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MessageRecord(BaseModel):
@@ -191,15 +203,17 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
     }
     previous_models = {env_key: os.environ.get(env_key) for env_key in model_env_keys.values()}
     try:
-        if req.provider_order:
-            os.environ["AGENT_PROVIDER_ORDER"] = req.provider_order
+        effective_provider_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
+        if effective_provider_order:
+            os.environ["AGENT_PROVIDER_ORDER"] = effective_provider_order
         for provider, model in (req.model_overrides or {}).items():
             env_key = model_env_keys.get(provider)
             if env_key and model.strip():
                 os.environ[env_key] = model.strip()
-        effective_max_tokens = req.max_tokens
+        mode_default_tokens = MODE_DEFAULT_MAX_TOKENS.get(req.response_mode, MODE_DEFAULT_MAX_TOKENS["fast"])
+        effective_max_tokens = int(req.max_tokens or mode_default_tokens)
         if enforce_min_tokens:
-            effective_max_tokens = max(MIN_CHAT_MAX_TOKENS, int(effective_max_tokens or MIN_CHAT_MAX_TOKENS))
+            effective_max_tokens = max(256, effective_max_tokens)
         result = chat_once_detailed(
             memory=None,
             THREAD_ID=req.thread_id,
@@ -210,6 +224,7 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             use_history=req.use_history,
             history_turns=req.history_turns,
             user_id=user_id,
+            response_mode=req.response_mode,
         )
     except Exception as exc:
         traceback.print_exc()
@@ -217,7 +232,8 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             "phase": "chat_once_detailed",
             "user_id": user_id,
             "thread_id": req.thread_id,
-            "provider_order": req.provider_order or resolve_provider_order(),
+            "provider_order": effective_provider_order if 'effective_provider_order' in locals() else resolve_provider_order(),
+            "response_mode": req.response_mode,
             "model_overrides": list((req.model_overrides or {}).keys()),
         }
         raise HTTPException(
@@ -225,11 +241,10 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             detail=f"{type(exc).__name__}: {exc}; context={error_context}",
         ) from exc
     finally:
-        if req.provider_order:
-            if previous_provider_order is None:
-                os.environ.pop("AGENT_PROVIDER_ORDER", None)
-            else:
-                os.environ["AGENT_PROVIDER_ORDER"] = previous_provider_order
+        if previous_provider_order is None:
+            os.environ.pop("AGENT_PROVIDER_ORDER", None)
+        else:
+            os.environ["AGENT_PROVIDER_ORDER"] = previous_provider_order
         for env_key, previous_value in previous_models.items():
             if previous_value is None:
                 os.environ.pop(env_key, None)
@@ -245,6 +260,8 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
         latency_s=meta.get("latency_s"),
         provider_attempts=meta.get("provider_attempts") or [],
         failover_errors=meta.get("failover_errors") or [],
+        provider_trace=meta.get("provider_trace") or [],
+        context_sizes=meta.get("context_sizes") or {},
     )
 
 

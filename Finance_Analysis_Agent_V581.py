@@ -81,6 +81,10 @@ MAX_GLOBAL_MEMORY_CHARS = int(os.getenv("MAX_GLOBAL_MEMORY_CHARS", "1600"))
 LIGHT_PROVIDER_MAX_PROMPT_TOKENS = int(os.getenv("LIGHT_PROVIDER_MAX_PROMPT_TOKENS", "1000"))
 GROQ_MAX_OUTPUT_TOKENS = int(os.getenv("GROQ_MAX_OUTPUT_TOKENS", "1536"))
 CLOUDFLARE_MAX_OUTPUT_TOKENS = int(os.getenv("CLOUDFLARE_MAX_OUTPUT_TOKENS", "1536"))
+LIGHT_SUMMARY_CHARS = int(os.getenv("LIGHT_SUMMARY_CHARS", "480"))
+LIGHT_GLOBAL_MEMORY_CHARS = int(os.getenv("LIGHT_GLOBAL_MEMORY_CHARS", "320"))
+LIGHT_USER_MESSAGE_CHARS = int(os.getenv("LIGHT_USER_MESSAGE_CHARS", "1600"))
+LIGHT_HISTORY_TURNS = int(os.getenv("LIGHT_HISTORY_TURNS", "0"))
 
 SYSTEM_POLICY = (
     "你是 CathyChang AI，請用繁體中文回答。"
@@ -286,6 +290,53 @@ def _compact_prompt_for_provider(prompt: str, provider: str) -> Tuple[str, Dict[
         "prompt_tokens": token_est(compact),
         "light_budget": LIGHT_PROVIDER_MAX_PROMPT_TOKENS,
     }
+
+
+SYSTEM_POLICY_LIGHT = (
+    "你是 CathyChang AI，請用繁體中文回答。"
+    "資料不足時請直接說明。"
+    "不要輸出<think>、內部推理或多餘說明。"
+)
+
+
+def _provider_request_profile(provider: str, prompt: str) -> Dict[str, Any]:
+    provider = (provider or "").strip().lower()
+    prompt_tokens = token_est(prompt)
+    if provider in {"groq", "cloudflare"}:
+        if prompt_tokens > LIGHT_PROVIDER_MAX_PROMPT_TOKENS:
+            return {
+                "skip": True,
+                "reason": f"prompt_too_large:{prompt_tokens}>{LIGHT_PROVIDER_MAX_PROMPT_TOKENS}",
+                "system_policy": SYSTEM_POLICY_LIGHT,
+                "max_tokens": min(768, GROQ_MAX_OUTPUT_TOKENS if provider == "groq" else CLOUDFLARE_MAX_OUTPUT_TOKENS),
+                "prompt_tokens": prompt_tokens,
+            }
+        return {
+            "skip": False,
+            "reason": "light_ok",
+            "system_policy": SYSTEM_POLICY_LIGHT,
+            "max_tokens": min(1024, GROQ_MAX_OUTPUT_TOKENS if provider == "groq" else CLOUDFLARE_MAX_OUTPUT_TOKENS),
+            "prompt_tokens": prompt_tokens,
+        }
+    return {
+        "skip": False,
+        "reason": "default",
+        "system_policy": SYSTEM_POLICY,
+        "max_tokens": MAX_OUTPUT_TOKENS,
+        "prompt_tokens": prompt_tokens,
+    }
+
+
+def _estimate_request_bytes(system_policy: str, prompt: str, max_tokens: int, temperature: float) -> int:
+    payload = {
+        "messages": [
+            {"role": "system", "content": system_policy},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": int(max_tokens),
+        "temperature": float(temperature),
+    }
+    return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
 
 def clean_model_output(text: str) -> str:
@@ -606,14 +657,14 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelRe
     return ModelReply(text=text, meta={"provider": "openrouter", "model": data.get("model", model), "usage": data.get("usage")})
 
 
-def call_groq(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
+def call_groq(prompt: str, max_tokens: int, temperature: float, system_policy: str = SYSTEM_POLICY) -> ModelReply:
     model = os.getenv("GROQ_MODEL", GROQ_MODEL).strip() or GROQ_MODEL
     url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_POLICY},
+            {"role": "system", "content": system_policy},
             {"role": "user", "content": prompt},
         ],
         "max_tokens": min(int(max_tokens), GROQ_MAX_OUTPUT_TOKENS),
@@ -707,13 +758,13 @@ def first_fireworks_serverless_model() -> str:
     return ""
 
 
-def call_cloudflare(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
+def call_cloudflare(prompt: str, max_tokens: int, temperature: float, system_policy: str = SYSTEM_POLICY) -> ModelReply:
     model = os.getenv("CF_MODEL", CF_MODEL).strip() or CF_MODEL
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
     payload = {
         "messages": [
-            {"role": "system", "content": SYSTEM_POLICY},
+            {"role": "system", "content": system_policy},
             {"role": "user", "content": prompt},
         ],
         "max_tokens": min(int(max_tokens), CLOUDFLARE_MAX_OUTPUT_TOKENS),
@@ -805,54 +856,121 @@ def local_fallback_generate(prompt: str) -> str:
     )
 
 
-def route_generate(prompt: str, max_tokens: int = MAX_OUTPUT_TOKENS, temperature: float = 0.2) -> ModelReply:
+def route_generate(prompt: Any, max_tokens: int = MAX_OUTPUT_TOKENS, temperature: float = 0.2) -> ModelReply:
     providers = resolve_provider_order()
     if not providers:
-        return ModelReply(local_fallback_generate(prompt), {"provider": "local_fallback"})
+        return ModelReply(local_fallback_generate(str(prompt or "")), {"provider": "local_fallback"})
+
+    if isinstance(prompt, dict):
+        prompt_bundle = {
+            "heavy": str(prompt.get("heavy") or ""),
+            "light": str(prompt.get("light") or prompt.get("heavy") or ""),
+        }
+    else:
+        prompt_bundle = {"heavy": str(prompt or ""), "light": str(prompt or "")}
 
     errors: List[Tuple[str, str]] = []
     attempts: List[str] = []
+    provider_trace: List[Dict[str, Any]] = []
     for provider in providers:
         attempts.append(provider)
+        trace: Dict[str, Any] = {"provider": provider}
+        started = None
         try:
-            provider_prompt = prompt
-            prompt_meta: Dict[str, Any] = {"mode": "full", "prompt_tokens": token_est(prompt)}
+            context_kind = "light" if provider in {"groq", "cloudflare"} else "heavy"
+            provider_prompt = prompt_bundle[context_kind]
+            prompt_meta: Dict[str, Any] = {"mode": context_kind, "prompt_tokens": token_est(provider_prompt)}
+            provider_profile = _provider_request_profile(provider, provider_prompt)
             if provider in {"groq", "cloudflare"}:
-                provider_prompt, prompt_meta = _compact_prompt_for_provider(prompt, provider)
+                provider_prompt, prompt_meta = _compact_prompt_for_provider(provider_prompt, provider)
+                provider_profile = _provider_request_profile(provider, provider_prompt)
                 debug_log(
                     provider,
                     f"prompt_compact mode={prompt_meta.get('mode')} prompt_tokens={prompt_meta.get('prompt_tokens')} "
                     f"budget={prompt_meta.get('light_budget', LIGHT_PROVIDER_MAX_PROMPT_TOKENS)}"
                 )
+                if provider_profile.get("skip"):
+                    reason = str(provider_profile.get("reason", "prompt_too_large"))
+                    errors.append((provider, reason))
+                    trace.update({
+                        "context_kind": context_kind,
+                        "prompt_tokens": prompt_meta.get("prompt_tokens"),
+                        "prompt_chars": len(provider_prompt),
+                        "estimated_request_bytes": _estimate_request_bytes(
+                            str(provider_profile.get("system_policy", SYSTEM_POLICY_LIGHT)),
+                            provider_prompt,
+                            int(provider_profile.get("max_tokens", 0) or 0),
+                            temperature,
+                        ),
+                        "elapsed_ms": 0,
+                        "status": "skipped",
+                        "reason": reason,
+                    })
+                    provider_trace.append(trace)
+                    debug_log(provider, f"skip {reason}")
+                    continue
 
             reply: Optional[ModelReply] = None
+            effective_max_tokens = max_tokens
+            effective_system_policy = SYSTEM_POLICY
+            if provider_profile:
+                effective_max_tokens = min(max_tokens, int(provider_profile.get("max_tokens", max_tokens)))
+                effective_system_policy = str(provider_profile.get("system_policy", SYSTEM_POLICY))
+            request_bytes = _estimate_request_bytes(effective_system_policy, provider_prompt, effective_max_tokens, temperature)
+            trace.update({
+                "context_kind": context_kind,
+                "prompt_tokens": token_est(provider_prompt),
+                "prompt_chars": len(provider_prompt),
+                "estimated_request_bytes": request_bytes,
+            })
+            started = time.perf_counter()
             if provider == "openrouter":
-                reply = call_openrouter(provider_prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_openrouter(provider_prompt, max_tokens=effective_max_tokens, temperature=temperature)
             if provider == "gemini":
-                reply = call_gemini(provider_prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_gemini(provider_prompt, max_tokens=effective_max_tokens, temperature=temperature)
             if provider == "cloudflare":
-                reply = call_cloudflare(provider_prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_cloudflare(
+                    provider_prompt,
+                    max_tokens=effective_max_tokens,
+                    temperature=temperature,
+                    system_policy=effective_system_policy,
+                )
             if provider == "groq":
-                reply = call_groq(provider_prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_groq(
+                    provider_prompt,
+                    max_tokens=effective_max_tokens,
+                    temperature=temperature,
+                    system_policy=effective_system_policy,
+                )
             if provider == "fireworks":
-                reply = call_fireworks(provider_prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_fireworks(provider_prompt, max_tokens=effective_max_tokens, temperature=temperature)
             if provider == "aws":
-                reply = call_aws(provider_prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_aws(provider_prompt, max_tokens=effective_max_tokens, temperature=temperature)
+            trace["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
+            trace["status"] = "ok"
+            provider_trace.append(trace)
             if reply is not None:
                 reply.meta = dict(reply.meta or {})
                 reply.meta["provider_attempts"] = attempts[:]
                 if provider_meta := prompt_meta:
                     reply.meta["prompt_meta"] = provider_meta
+                if provider_profile:
+                    reply.meta["provider_profile"] = provider_profile
+                reply.meta["provider_trace"] = provider_trace[:]
                 if errors:
                     reply.meta["failover_errors"] = [{"provider": p, "error": e} for p, e in errors]
                 return reply
         except Exception as exc:
             errors.append((provider, str(exc)))
+            trace["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1) if started is not None else 0
+            trace["status"] = "error"
+            trace["reason"] = str(exc)
+            provider_trace.append(trace)
             debug_log(provider, exc)
 
     return ModelReply(
-        local_fallback_generate(prompt),
-        {"provider": "local_fallback", "errors": errors},
+        local_fallback_generate(prompt_bundle["heavy"]),
+        {"provider": "local_fallback", "errors": errors, "provider_attempts": attempts, "provider_trace": provider_trace},
     )
 
 
@@ -967,6 +1085,114 @@ def _build_context(
     )
 
 
+def _build_context_variant(
+    adapter: MemoryAdapter,
+    user_text: str,
+    history_turns: int,
+    use_history: bool,
+    use_summary: bool,
+    user_id: Optional[str] = None,
+    include_global: bool = True,
+    include_summary: bool = True,
+    include_history: bool = True,
+    max_prompt_tokens: Optional[int] = None,
+    max_summary_chars: Optional[int] = None,
+    max_global_memory_chars: Optional[int] = None,
+    max_history_turn_chars: Optional[int] = None,
+    max_user_message_chars: Optional[int] = None,
+) -> str:
+    blocks: List[Tuple[str, str]] = []
+    prompt_budget = int(max_prompt_tokens or MAX_PROMPT_TOKENS)
+    summary_budget = int(max_summary_chars or MAX_SUMMARY_CHARS)
+    global_budget = int(max_global_memory_chars or MAX_GLOBAL_MEMORY_CHARS)
+    history_turn_budget = int(max_history_turn_chars or MAX_HISTORY_TURN_CHARS)
+    user_budget = int(max_user_message_chars or MAX_USER_MESSAGE_CHARS)
+
+    global_facts = load_global_facts(user_id) if include_global else {}
+    if global_facts:
+        lines = []
+        for key in sorted(global_facts.keys()):
+            value = global_facts[key]
+            if isinstance(value, dict):
+                lines.append(f"{key}={value.get('value', '')}")
+            else:
+                lines.append(f"{key}={value}")
+        if lines:
+            blocks.append(("global", _clip_text("[全域記憶]\n" + "\n".join(lines), global_budget, "全域記憶")))
+
+    if use_summary and include_summary:
+        summary = adapter.load_summary()
+        if summary:
+            blocks.append(("summary", "[對話摘要]\n" + _clip_text(summary, summary_budget, "對話摘要")))
+
+    if use_history and include_history and history_turns > 0:
+        turns = adapter.get_recent_turns(history_turns)
+        if turns:
+            lines = []
+            for turn in turns:
+                role = str(turn.get("role", "")).upper()
+                content = _clip_text(str(turn.get("content", "")), history_turn_budget, "單則歷史對話")
+                if role and content:
+                    lines.append(f"{role}: {content}")
+            if lines:
+                blocks.append(("history", "[最近對話]\n" + "\n".join(lines)))
+
+    user_text = _clip_text(user_text, user_budget, "本輪使用者訊息")
+    blocks.append(("user", "[本輪使用者問題]\n" + user_text))
+
+    def _join(items: List[Tuple[str, str]]) -> str:
+        return "\n\n".join(text for _, text in items if text.strip())
+
+    prompt = _join(blocks)
+    if token_est(prompt) <= prompt_budget:
+        return prompt
+
+    compacted = [item for item in blocks if item[0] != "history"]
+    prompt = _join(compacted)
+    if token_est(prompt) <= prompt_budget:
+        return "[系統註記] 最近對話因 token 預算限制已省略，請優先回答本輪問題。\n\n" + prompt
+
+    compacted = [item for item in compacted if item[0] != "summary"]
+    prompt = _join(compacted)
+    if token_est(prompt) <= prompt_budget:
+        return "[系統註記] 對話摘要與最近對話因 token 預算限制已省略，請優先回答本輪問題。\n\n" + prompt
+
+    compacted = [item for item in compacted if item[0] != "global"]
+    prompt = _join(compacted)
+    if token_est(prompt) <= prompt_budget:
+        return "[系統註記] 全域記憶、摘要與最近對話因 token 預算限制已省略，請優先回答本輪問題。\n\n" + prompt
+
+    max_user_chars = max(1000, int(prompt_budget / max(TOKEN_EST_RATIO, 0.1)) - 800)
+    return (
+        "[系統註記] 使用者訊息過長，已保留前段內容並省略歷史脈絡；若需要完整分析，請分段貼上。\n\n"
+        + "[本輪使用者問題]\n"
+        + _clip_text(user_text, max_user_chars, "本輪使用者訊息")
+    )
+
+
+def _build_light_context(
+    adapter: MemoryAdapter,
+    user_text: str,
+    use_summary: bool,
+    user_id: Optional[str] = None,
+) -> str:
+    return _build_context_variant(
+        adapter,
+        user_text,
+        history_turns=LIGHT_HISTORY_TURNS,
+        use_history=False,
+        use_summary=use_summary,
+        user_id=user_id,
+        include_global=True,
+        include_summary=True,
+        include_history=False,
+        max_prompt_tokens=LIGHT_PROVIDER_MAX_PROMPT_TOKENS,
+        max_summary_chars=LIGHT_SUMMARY_CHARS,
+        max_global_memory_chars=LIGHT_GLOBAL_MEMORY_CHARS,
+        max_user_message_chars=LIGHT_USER_MESSAGE_CHARS,
+    )
+
+
 def _update_summary(adapter: MemoryAdapter) -> None:
     rows = adapter.load_chat_raw()
     recent = rows[-8:]
@@ -993,6 +1219,7 @@ def chat_once_detailed(
     use_summary: bool = True,
     summary_chars: int = 1800,
     user_id: Optional[str] = None,
+    response_mode: str = "fast",
 ) -> Dict[str, Any]:
     del min_tokens, summary_chars
     user_text = strip_redundant(user_text_or_prompt)
@@ -1000,11 +1227,17 @@ def chat_once_detailed(
         return {"reply": "請輸入問題。", "meta": {"provider": "local"}}
 
     adapter = MemoryAdapter(memory=memory, THREAD_ID=THREAD_ID or "WEB_DEFAULT", USER_ID=user_id)
-    prompt = _build_context(
+    heavy_prompt = _build_context_variant(
         adapter,
         user_text,
         history_turns=history_turns,
         use_history=use_history,
+        use_summary=use_summary,
+        user_id=user_id,
+    )
+    light_prompt = _build_light_context(
+        adapter,
+        user_text,
         use_summary=use_summary,
         user_id=user_id,
     )
@@ -1019,7 +1252,7 @@ def chat_once_detailed(
         debug_log("memory", f"failed to persist user turn: {type(exc).__name__}: {exc}")
     t0 = time.perf_counter()
     reply = route_generate(
-        mask_pii(prompt),
+        {"heavy": mask_pii(heavy_prompt), "light": mask_pii(light_prompt)},
         max_tokens=int(max_tokens_override or MAX_OUTPUT_TOKENS),
         temperature=float(temperature_override if temperature_override is not None else 0.2),
     )
@@ -1027,6 +1260,13 @@ def chat_once_detailed(
     assistant_text = strip_redundant(clean_model_output(reply.text))
     meta = dict(reply.meta or {})
     meta["latency_s"] = latency_s
+    meta["response_mode"] = response_mode
+    meta["context_sizes"] = {
+        "heavy_prompt_tokens": token_est(heavy_prompt),
+        "heavy_prompt_chars": len(heavy_prompt),
+        "light_prompt_tokens": token_est(light_prompt),
+        "light_prompt_chars": len(light_prompt),
+    }
     try:
         adapter.add_turn("assistant", assistant_text, meta=meta)
     except Exception as exc:
@@ -1054,6 +1294,7 @@ def chat_once(
     use_summary: bool = True,
     summary_chars: int = 1800,
     user_id: Optional[str] = None,
+    response_mode: str = "fast",
 ) -> str:
     result = chat_once_detailed(
         memory=memory,
@@ -1068,6 +1309,7 @@ def chat_once(
         use_summary=use_summary,
         summary_chars=summary_chars,
         user_id=user_id,
+        response_mode=response_mode,
     )
     assistant_text = str(result.get("reply", ""))
     return assistant_text

@@ -59,21 +59,21 @@ const CHAT_REQUEST_TIMEOUT_MS = 90000;
 const responsePresets = {
   fast: {
     label: "快速短答",
-    maxTokens: 3000,
+    maxTokens: 768,
     historyTurns: 2,
-    providerOrder: "groq,openrouter,cloudflare,gemini,aws,fireworks"
+    providerOrder: "openrouter,groq,cloudflare,gemini,aws,fireworks"
   },
   stable: {
     label: "穩定聊天",
-    maxTokens: 4096,
+    maxTokens: 2048,
     historyTurns: 4,
-    providerOrder: "openrouter,cloudflare,groq,gemini,aws,fireworks"
+    providerOrder: "openrouter,gemini,cloudflare,groq,aws,fireworks"
   },
   deep: {
     label: "深度分析",
-    maxTokens: 6000,
+    maxTokens: 4096,
     historyTurns: 6,
-    providerOrder: "openrouter,gemini,cloudflare,groq,aws,fireworks"
+    providerOrder: "openrouter,gemini,aws,cloudflare,groq,fireworks"
   }
 };
 let userId = sanitizeUserId(localStorage.getItem(userIdKey) || "");
@@ -169,12 +169,12 @@ function currentResponsePreset() {
 
 function mobileProviderOrderFor(modeKey) {
   if (modeKey === "deep") {
-    return "groq,openrouter,gemini,cloudflare,aws,fireworks";
+    return "openrouter,gemini,aws,cloudflare,groq,fireworks";
   }
   if (modeKey === "stable") {
-    return "groq,cloudflare,openrouter,gemini,aws,fireworks";
+    return "openrouter,gemini,cloudflare,groq,aws,fireworks";
   }
-  return "groq,cloudflare,openrouter,gemini,aws,fireworks";
+  return "openrouter,groq,cloudflare,gemini,aws,fireworks";
 }
 
 function applyResponsePreset(shouldLog = true) {
@@ -241,6 +241,23 @@ function addMessage(role, text, meta = {}) {
   requestAnimationFrame(() => {
     messages.scrollTop = messages.scrollHeight;
   });
+}
+
+function logProviderTrace(providerTrace) {
+  if (!Array.isArray(providerTrace) || !providerTrace.length) return;
+  for (const item of providerTrace) {
+    const parts = [
+      `trace ${item.provider || "unknown"}`,
+      `status=${item.status || "unknown"}`,
+      `context=${item.context_kind || "unknown"}`,
+      `tokens=${item.prompt_tokens ?? "?"}`,
+      `chars=${item.prompt_chars ?? "?"}`,
+      `bytes=${item.estimated_request_bytes ?? "?"}`,
+      `elapsed=${item.elapsed_ms ?? 0}ms`
+    ];
+    if (item.reason) parts.push(`reason=${item.reason}`);
+    log(parts.join(" | "), item.status === "ok" ? "TRACE" : "WARN");
+  }
 }
 
 function renderStoredMessages(records) {
@@ -600,7 +617,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
     const started = performance.now();
     const preset = currentResponsePreset();
     const isMobile = isMobileLayout();
-    const effectiveMaxTokens = isMobile ? Math.min(Number(maxTokensInput.value || preset.maxTokens), 3000) : Number(maxTokensInput.value || preset.maxTokens);
+    const effectiveMaxTokens = Number(maxTokensInput.value || preset.maxTokens);
     const effectiveHistoryTurns = isMobile ? Math.min(Number(preset.historyTurns || 2), 2) : Number(preset.historyTurns || 2);
     const effectiveProviderOrder = isMobile ? mobileProviderOrderFor(responseModeInput.value) : (providerOrderInput.value || null);
     const controller = new AbortController();
@@ -616,6 +633,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
         temperature: Number(temperatureInput.value || 0.2),
         use_history: true,
         history_turns: effectiveHistoryTurns,
+        response_mode: responseModeInput.value,
         provider_order: effectiveProviderOrder,
         model_overrides: collectModelOverrides()
       })
@@ -640,6 +658,14 @@ async function sendMessage(message, endpoint = "/api/chat") {
     });
     if (data.failover_errors?.length) {
       log(`failover: ${data.failover_errors.map((item) => `${item.provider} -> ${item.error}`).join(" ; ")}`, "WARN");
+    }
+    logProviderTrace(data.provider_trace);
+    if (data.context_sizes) {
+      log(
+        `context sizes: heavy=${data.context_sizes.heavy_prompt_tokens || "?"}t/${data.context_sizes.heavy_prompt_chars || "?"}c | ` +
+        `light=${data.context_sizes.light_prompt_tokens || "?"}t/${data.context_sizes.light_prompt_chars || "?"}c`,
+        "TRACE"
+      );
     }
     log(`reply ok; provider=${data.provider || "unknown"} model=${data.model || "unknown"} latency=${data.latency_s ?? ((performance.now() - started) / 1000).toFixed(2)}s`, "OK");
     loadThreads();
