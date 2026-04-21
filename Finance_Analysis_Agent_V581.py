@@ -88,6 +88,12 @@ LIGHT_HISTORY_TURNS = int(os.getenv("LIGHT_HISTORY_TURNS", "0"))
 AUTO_CONTINUE_ENABLED = os.getenv("AUTO_CONTINUE_ENABLED", "true").lower() == "true"
 AUTO_CONTINUE_MAX_ROUNDS = int(os.getenv("AUTO_CONTINUE_MAX_ROUNDS", "2"))
 AUTO_CONTINUE_TAIL_CHARS = int(os.getenv("AUTO_CONTINUE_TAIL_CHARS", "1200"))
+FAST_MODE_ROUTE_TIMEOUT_SEC = int(os.getenv("FAST_MODE_ROUTE_TIMEOUT_SEC", "35"))
+STABLE_MODE_ROUTE_TIMEOUT_SEC = int(os.getenv("STABLE_MODE_ROUTE_TIMEOUT_SEC", "55"))
+DEEP_MODE_ROUTE_TIMEOUT_SEC = int(os.getenv("DEEP_MODE_ROUTE_TIMEOUT_SEC", "75"))
+FAST_MODE_CONTINUE_ROUNDS = int(os.getenv("FAST_MODE_CONTINUE_ROUNDS", "0"))
+STABLE_MODE_CONTINUE_ROUNDS = int(os.getenv("STABLE_MODE_CONTINUE_ROUNDS", "1"))
+DEEP_MODE_CONTINUE_ROUNDS = int(os.getenv("DEEP_MODE_CONTINUE_ROUNDS", str(AUTO_CONTINUE_MAX_ROUNDS)))
 
 SYSTEM_POLICY = (
     "你是 CathyChang AI，請用繁體中文回答。"
@@ -702,6 +708,26 @@ def _chat_timeout(provider: str) -> int:
     return max(10, min(int(REQUEST_TIMEOUT_SEC), int(candidate)))
 
 
+def _route_timeout_budget(response_mode: str) -> int:
+    mode = (response_mode or "fast").strip().lower()
+    mapping = {
+        "fast": FAST_MODE_ROUTE_TIMEOUT_SEC,
+        "stable": STABLE_MODE_ROUTE_TIMEOUT_SEC,
+        "deep": DEEP_MODE_ROUTE_TIMEOUT_SEC,
+    }
+    return max(15, min(int(REQUEST_TIMEOUT_SEC), int(mapping.get(mode, STABLE_MODE_ROUTE_TIMEOUT_SEC))))
+
+
+def _continue_round_limit(response_mode: str) -> int:
+    mode = (response_mode or "fast").strip().lower()
+    mapping = {
+        "fast": FAST_MODE_CONTINUE_ROUNDS,
+        "stable": STABLE_MODE_CONTINUE_ROUNDS,
+        "deep": DEEP_MODE_CONTINUE_ROUNDS,
+    }
+    return max(0, min(int(AUTO_CONTINUE_MAX_ROUNDS), int(mapping.get(mode, AUTO_CONTINUE_MAX_ROUNDS))))
+
+
 def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
     model = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL).strip() or OPENROUTER_MODEL
     url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1") + "/chat/completions"
@@ -934,7 +960,12 @@ def local_fallback_generate(prompt: str) -> str:
     )
 
 
-def route_generate(prompt: Any, max_tokens: int = MAX_OUTPUT_TOKENS, temperature: float = 0.2) -> ModelReply:
+def route_generate(
+    prompt: Any,
+    max_tokens: int = MAX_OUTPUT_TOKENS,
+    temperature: float = 0.2,
+    response_mode: str = "fast",
+) -> ModelReply:
     providers = resolve_provider_order()
     if not providers:
         return ModelReply(local_fallback_generate(str(prompt or "")), {"provider": "local_fallback"})
@@ -950,7 +981,25 @@ def route_generate(prompt: Any, max_tokens: int = MAX_OUTPUT_TOKENS, temperature
     errors: List[Tuple[str, str]] = []
     attempts: List[str] = []
     provider_trace: List[Dict[str, Any]] = []
+    best_reply: Optional[ModelReply] = None
+    route_started = time.perf_counter()
+    route_timeout_sec = _route_timeout_budget(response_mode)
+    max_continue_rounds = _continue_round_limit(response_mode)
     for provider in providers:
+        route_elapsed_sec = time.perf_counter() - route_started
+        if route_elapsed_sec >= route_timeout_sec:
+            provider_trace.append({
+                "provider": provider,
+                "status": "skipped",
+                "context_kind": "route",
+                "prompt_tokens": 0,
+                "prompt_chars": 0,
+                "estimated_request_bytes": 0,
+                "elapsed_ms": round(route_elapsed_sec * 1000, 1),
+                "reason": f"route_timeout_budget_exhausted:{route_timeout_sec}s",
+            })
+            errors.append((provider, f"route_timeout_budget_exhausted:{route_timeout_sec}s"))
+            break
         attempts.append(provider)
         trace: Dict[str, Any] = {"provider": provider}
         started = None
@@ -1015,7 +1064,19 @@ def route_generate(prompt: Any, max_tokens: int = MAX_OUTPUT_TOKENS, temperature
             if reply is not None:
                 reply.meta = dict(reply.meta or {})
                 continue_rounds = 0
-                while continue_rounds < AUTO_CONTINUE_MAX_ROUNDS and _needs_auto_continue(reply, effective_max_tokens):
+                while continue_rounds < max_continue_rounds and _needs_auto_continue(reply, effective_max_tokens):
+                    if (time.perf_counter() - route_started) >= route_timeout_sec:
+                        provider_trace.append({
+                            "provider": provider,
+                            "status": "skipped",
+                            "context_kind": context_kind,
+                            "prompt_tokens": token_est(reply.text or ""),
+                            "prompt_chars": len(reply.text or ""),
+                            "estimated_request_bytes": 0,
+                            "elapsed_ms": round((time.perf_counter() - route_started) * 1000, 1),
+                            "reason": f"continue_budget_exhausted:{route_timeout_sec}s",
+                        })
+                        break
                     continue_rounds += 1
                     continue_prompt = _build_continue_prompt(provider_prompt, reply.text)
                     continue_trace: Dict[str, Any] = {
@@ -1068,6 +1129,8 @@ def route_generate(prompt: Any, max_tokens: int = MAX_OUTPUT_TOKENS, temperature
                 reply.meta["provider_trace"] = provider_trace[:]
                 if errors:
                     reply.meta["failover_errors"] = [{"provider": p, "error": e} for p, e in errors]
+                reply.meta["route_timeout_sec"] = route_timeout_sec
+                best_reply = reply
                 return reply
         except Exception as exc:
             errors.append((provider, str(exc)))
@@ -1077,9 +1140,32 @@ def route_generate(prompt: Any, max_tokens: int = MAX_OUTPUT_TOKENS, temperature
             provider_trace.append(trace)
             debug_log(provider, exc)
 
+    route_elapsed_ms = round((time.perf_counter() - route_started) * 1000, 1)
+    if best_reply is not None:
+        best_reply.meta = dict(best_reply.meta or {})
+        best_reply.meta["provider_trace"] = provider_trace[:]
+        best_reply.meta["failover_errors"] = [{"provider": p, "error": e} for p, e in errors]
+        best_reply.meta["provider_attempts"] = attempts[:]
+        best_reply.meta["route_timeout_sec"] = route_timeout_sec
+        return best_reply
+
+    timeout_text = (
+        f"本輪對話在 {route_timeout_sec} 秒內未能取得可用回覆，系統已主動結束這次嘗試。"
+        "請改用較快的回覆模式、縮短問題，或稍後再試。"
+    )
     return ModelReply(
-        local_fallback_generate(prompt_bundle["heavy"]),
-        {"provider": "local_fallback", "errors": errors, "provider_attempts": attempts, "provider_trace": provider_trace},
+        timeout_text if errors else local_fallback_generate(prompt_bundle["heavy"]),
+        {
+            "provider": "local_fallback",
+            "errors": errors,
+            "provider_attempts": attempts,
+            "provider_trace": provider_trace,
+            "route_timeout_sec": route_timeout_sec,
+            "usage": {},
+            "failover_errors": [{"provider": p, "error": e} for p, e in errors],
+            "timeout_message": f"route_timeout_or_all_providers_failed:{route_timeout_sec}s",
+            "route_elapsed_ms": route_elapsed_ms,
+        },
     )
 
 
@@ -1364,6 +1450,7 @@ def chat_once_detailed(
         {"heavy": mask_pii(heavy_prompt), "light": mask_pii(light_prompt)},
         max_tokens=int(max_tokens_override or MAX_OUTPUT_TOKENS),
         temperature=float(temperature_override if temperature_override is not None else 0.2),
+        response_mode=response_mode,
     )
     latency_s = round(time.perf_counter() - t0, 3)
     assistant_text = strip_redundant(clean_model_output(reply.text))

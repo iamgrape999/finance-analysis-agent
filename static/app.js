@@ -177,6 +177,16 @@ function mobileProviderOrderFor(modeKey) {
   return "openrouter,groq,cloudflare,gemini,aws,fireworks";
 }
 
+function chatRequestTimeoutMsForMode(modeKey) {
+  if (modeKey === "deep") {
+    return 95000;
+  }
+  if (modeKey === "stable") {
+    return 80000;
+  }
+  return 60000;
+}
+
 function applyResponsePreset(shouldLog = true) {
   const preset = currentResponsePreset();
   maxTokensInput.value = String(preset.maxTokens);
@@ -607,11 +617,12 @@ async function sendMessage(message, endpoint = "/api/chat") {
   collapseMobilePanels();
   input.value = "";
   setBusy(true);
-  const firstProvider = (providerOrderInput.value || "").split(",")[0]?.trim();
+  const effectiveProviderOrder = isMobileLayout() ? mobileProviderOrderFor(responseModeInput.value) : (providerOrderInput.value || null);
+  const firstProvider = (effectiveProviderOrder || "").split(",")[0]?.trim();
   if (firstProvider && providerReadiness[firstProvider] === false) {
     log(`${firstProvider} is selected first but not connected; backend will fail over to the next ready provider`, "WARN");
   }
-  log(`calling ${endpoint}; user=${userId}; thread=${threadId}`, "CALL");
+  log(`calling ${endpoint}; user=${userId}; thread=${threadId}; provider_order=${effectiveProviderOrder || "backend"}`, "CALL");
 
   let timeoutId = null;
   try {
@@ -620,9 +631,9 @@ async function sendMessage(message, endpoint = "/api/chat") {
     const isMobile = isMobileLayout();
     const effectiveMaxTokens = Number(maxTokensInput.value || preset.maxTokens);
     const effectiveHistoryTurns = isMobile ? Math.min(Number(preset.historyTurns || 2), 2) : Number(preset.historyTurns || 2);
-    const effectiveProviderOrder = isMobile ? mobileProviderOrderFor(responseModeInput.value) : (providerOrderInput.value || null);
+    const requestTimeoutMs = chatRequestTimeoutMsForMode(responseModeInput.value);
     const controller = new AbortController();
-    timeoutId = window.setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), CHAT_REQUEST_TIMEOUT_MS);
+    timeoutId = window.setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), requestTimeoutMs);
     const res = await fetch(apiUrl(endpoint), {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
@@ -669,6 +680,9 @@ async function sendMessage(message, endpoint = "/api/chat") {
         "TRACE"
       );
     }
+    if (data.route_timeout_sec !== undefined && data.route_timeout_sec !== null) {
+      log(`route timeout budget=${data.route_timeout_sec}s`, "TRACE");
+    }
     log(`reply ok; provider=${data.provider || "unknown"} model=${data.model || "unknown"} latency=${data.latency_s ?? ((performance.now() - started) / 1000).toFixed(2)}s`, "OK");
     loadThreads();
     loadGlobalMemory();
@@ -677,7 +691,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
       ? "請求逾時，已中止這次對話。請稍後再試，或改用更快的回覆模式。"
       : friendlyNetworkError(err);
     addMessage("assistant", `發生錯誤：${rawMessage}`);
-    log(`chat failed: ${err?.name || "Error"} ${err?.message || String(err)}; thread=${threadId}; provider_order=${providerOrderInput.value || "backend"}`, "FAIL");
+    log(`chat failed: ${err?.name || "Error"} ${err?.message || String(err)}; thread=${threadId}; provider_order=${effectiveProviderOrder || "backend"}`, "FAIL");
   } finally {
     if (timeoutId !== null) {
       window.clearTimeout(timeoutId);
