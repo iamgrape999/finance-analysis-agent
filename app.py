@@ -37,6 +37,7 @@ APP_NAME = os.getenv("APP_NAME", "CathyChang AI")
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
 APP_USERS_RAW = os.getenv("APP_USERS", "").strip()
+APP_BUILD_ID = os.getenv("APP_BUILD_ID", "2026-04-21-route-budget-v2")
 MODE_DEFAULT_MAX_TOKENS = {
     "fast": int(os.getenv("FAST_MODE_MAX_TOKENS", "768")),
     "stable": int(os.getenv("STABLE_MODE_MAX_TOKENS", "2048")),
@@ -164,6 +165,7 @@ def health(
     return {
         "ok": True,
         "app": APP_NAME,
+        "backend_version": APP_BUILD_ID,
         "auth_mode": "per_user" if users else "shared_password",
         "password_required": bool(APP_PASSWORD or users),
         "user_required": True,

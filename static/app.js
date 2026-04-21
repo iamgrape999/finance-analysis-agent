@@ -56,6 +56,7 @@ const apiBaseKey = "finance_agent_api_base";
 const passwordKey = "finance_agent_app_password";
 const responseModeKey = "finance_agent_response_mode";
 const CHAT_REQUEST_TIMEOUT_MS = 90000;
+const FRONTEND_BUILD = "2026-04-21-route-budget-v2";
 const responsePresets = {
   fast: {
     label: "快速短答",
@@ -331,6 +332,9 @@ async function checkHealth() {
     }
     providerReadiness = data.providers || {};
     modelDefaults = data.model_defaults || {};
+    if (data.backend_version) {
+      log(`backend version=${data.backend_version}`, "TRACE");
+    }
     if (!data.password_required) {
       log("backend reports password_required=false; set APP_PASSWORD on Render to enforce login", "WARN");
     }
@@ -859,6 +863,7 @@ passwordUserInput.addEventListener("keydown", (event) => {
 });
 
 log("UI initialized", "STEP");
+log(`frontend build=${FRONTEND_BUILD}`, "TRACE");
 setUnlocked(false);
 applyResponsePreset(false);
 if (isMobileLayout()) {

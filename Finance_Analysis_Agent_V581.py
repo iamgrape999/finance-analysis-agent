@@ -405,21 +405,34 @@ def _call_provider_once(
     max_tokens: int,
     temperature: float,
     provider_profile: Optional[Dict[str, Any]] = None,
+    timeout_override: Optional[float] = None,
 ) -> Optional[ModelReply]:
     effective_max_tokens = min(int(max_tokens), int((provider_profile or {}).get("max_tokens", max_tokens)))
     effective_system_policy = str((provider_profile or {}).get("system_policy", SYSTEM_POLICY))
     if provider == "openrouter":
-        return call_openrouter(prompt, max_tokens=effective_max_tokens, temperature=temperature)
+        return call_openrouter(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "gemini":
-        return call_gemini(prompt, max_tokens=effective_max_tokens, temperature=temperature)
+        return call_gemini(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "cloudflare":
-        return call_cloudflare(prompt, max_tokens=effective_max_tokens, temperature=temperature, system_policy=effective_system_policy)
+        return call_cloudflare(
+            prompt,
+            max_tokens=effective_max_tokens,
+            temperature=temperature,
+            system_policy=effective_system_policy,
+            timeout_override=timeout_override,
+        )
     if provider == "groq":
-        return call_groq(prompt, max_tokens=effective_max_tokens, temperature=temperature, system_policy=effective_system_policy)
+        return call_groq(
+            prompt,
+            max_tokens=effective_max_tokens,
+            temperature=temperature,
+            system_policy=effective_system_policy,
+            timeout_override=timeout_override,
+        )
     if provider == "fireworks":
-        return call_fireworks(prompt, max_tokens=effective_max_tokens, temperature=temperature)
+        return call_fireworks(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "aws":
-        return call_aws(prompt, max_tokens=effective_max_tokens, temperature=temperature)
+        return call_aws(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     return None
 
 
@@ -728,7 +741,18 @@ def _continue_round_limit(response_mode: str) -> int:
     return max(0, min(int(AUTO_CONTINUE_MAX_ROUNDS), int(mapping.get(mode, AUTO_CONTINUE_MAX_ROUNDS))))
 
 
-def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
+def _effective_timeout(provider: str, timeout_override: Optional[float] = None) -> int:
+    base_timeout = _chat_timeout(provider)
+    if timeout_override is None:
+        return base_timeout
+    try:
+        requested = int(timeout_override)
+    except Exception:
+        return base_timeout
+    return max(3, min(base_timeout, requested))
+
+
+def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
     model = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL).strip() or OPENROUTER_MODEL
     url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1") + "/chat/completions"
     headers = {
@@ -748,7 +772,7 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelRe
         "max_tokens": int(max_tokens),
         "temperature": float(temperature),
     }
-    timeout_sec = _chat_timeout("openrouter")
+    timeout_sec = _effective_timeout("openrouter", timeout_override)
     resp = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
     if resp.status_code >= 400:
         raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text[:300]}")
@@ -761,7 +785,13 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float) -> ModelRe
     return ModelReply(text=text, meta={"provider": "openrouter", "model": data.get("model", model), "usage": data.get("usage")})
 
 
-def call_groq(prompt: str, max_tokens: int, temperature: float, system_policy: str = SYSTEM_POLICY) -> ModelReply:
+def call_groq(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    system_policy: str = SYSTEM_POLICY,
+    timeout_override: Optional[float] = None,
+) -> ModelReply:
     model = os.getenv("GROQ_MODEL", GROQ_MODEL).strip() or GROQ_MODEL
     url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -774,7 +804,7 @@ def call_groq(prompt: str, max_tokens: int, temperature: float, system_policy: s
         "max_tokens": min(int(max_tokens), GROQ_MAX_OUTPUT_TOKENS),
         "temperature": float(temperature),
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=_chat_timeout("groq"))
+    resp = requests.post(url, headers=headers, json=payload, timeout=_effective_timeout("groq", timeout_override))
     if resp.status_code >= 400:
         raise RuntimeError(f"Groq error {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
@@ -784,7 +814,7 @@ def call_groq(prompt: str, max_tokens: int, temperature: float, system_policy: s
     return ModelReply(text=text, meta={"provider": "groq", "model": model, "usage": data.get("usage")})
 
 
-def call_fireworks(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
+def call_fireworks(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
     model = os.getenv("FIREWORKS_MODEL", FIREWORKS_MODEL).strip() or FIREWORKS_MODEL
     base_url = os.getenv("FIREWORKS_BASE_URL", FIREWORKS_BASE_URL).rstrip("/")
     url = f"{base_url}/chat/completions"
@@ -799,7 +829,7 @@ def call_fireworks(prompt: str, max_tokens: int, temperature: float) -> ModelRep
         "temperature": float(temperature),
         "stream": False,
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=_chat_timeout("fireworks"))
+    resp = requests.post(url, headers=headers, json=payload, timeout=_effective_timeout("fireworks", timeout_override))
     if resp.status_code >= 400:
         raise RuntimeError(
             f"Fireworks error {resp.status_code}: {resp.text[:300]} "
@@ -862,7 +892,13 @@ def first_fireworks_serverless_model() -> str:
     return ""
 
 
-def call_cloudflare(prompt: str, max_tokens: int, temperature: float, system_policy: str = SYSTEM_POLICY) -> ModelReply:
+def call_cloudflare(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    system_policy: str = SYSTEM_POLICY,
+    timeout_override: Optional[float] = None,
+) -> ModelReply:
     model = os.getenv("CF_MODEL", CF_MODEL).strip() or CF_MODEL
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
@@ -874,7 +910,7 @@ def call_cloudflare(prompt: str, max_tokens: int, temperature: float, system_pol
         "max_tokens": min(int(max_tokens), CLOUDFLARE_MAX_OUTPUT_TOKENS),
         "temperature": float(temperature),
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=_chat_timeout("cloudflare"))
+    resp = requests.post(url, headers=headers, json=payload, timeout=_effective_timeout("cloudflare", timeout_override))
     if resp.status_code >= 400:
         raise RuntimeError(f"Cloudflare error {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
@@ -888,7 +924,8 @@ def call_cloudflare(prompt: str, max_tokens: int, temperature: float, system_pol
     return ModelReply(text=str(text).strip(), meta={"provider": "cloudflare", "model": model, "usage": usage})
 
 
-def call_gemini(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
+def call_gemini(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    del timeout_override
     model = os.getenv("GEMINI_MODEL", GEMINI_MODEL).strip() or GEMINI_MODEL
     try:
         from google import genai  # type: ignore
@@ -919,7 +956,7 @@ def call_gemini(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
     return ModelReply(text=text.strip(), meta={"provider": "gemini", "model": model, "usage": usage})
 
 
-def call_aws(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
+def call_aws(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
     model = os.getenv("AWS_BEDROCK_MODEL", AWS_BEDROCK_MODEL).strip() or AWS_BEDROCK_MODEL
     try:
         import boto3  # type: ignore
@@ -930,7 +967,7 @@ def call_aws(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
     session = boto3.Session(region_name=AWS_REGION)
     client = session.client(
         "bedrock-runtime",
-        config=botocore.config.Config(connect_timeout=10, read_timeout=_chat_timeout("aws")),
+        config=botocore.config.Config(connect_timeout=10, read_timeout=_effective_timeout("aws", timeout_override)),
     )
     body = {
         "anthropic_version": "bedrock-2023-05-31",
@@ -1004,6 +1041,7 @@ def route_generate(
         trace: Dict[str, Any] = {"provider": provider}
         started = None
         try:
+            remaining_budget_sec = max(3.0, route_timeout_sec - (time.perf_counter() - route_started))
             context_kind = "light" if provider in {"groq", "cloudflare"} else "heavy"
             provider_prompt = prompt_bundle[context_kind]
             prompt_meta: Dict[str, Any] = {"mode": context_kind, "prompt_tokens": token_est(provider_prompt)}
@@ -1049,6 +1087,7 @@ def route_generate(
                 "prompt_tokens": token_est(provider_prompt),
                 "prompt_chars": len(provider_prompt),
                 "estimated_request_bytes": request_bytes,
+                "remaining_budget_sec": round(remaining_budget_sec, 1),
             })
             started = time.perf_counter()
             reply = _call_provider_once(
@@ -1057,6 +1096,7 @@ def route_generate(
                 max_tokens=effective_max_tokens,
                 temperature=temperature,
                 provider_profile=provider_profile,
+                timeout_override=remaining_budget_sec,
             )
             trace["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
             trace["status"] = "ok"
@@ -1065,7 +1105,8 @@ def route_generate(
                 reply.meta = dict(reply.meta or {})
                 continue_rounds = 0
                 while continue_rounds < max_continue_rounds and _needs_auto_continue(reply, effective_max_tokens):
-                    if (time.perf_counter() - route_started) >= route_timeout_sec:
+                    remaining_continue_budget_sec = route_timeout_sec - (time.perf_counter() - route_started)
+                    if remaining_continue_budget_sec <= 5:
                         provider_trace.append({
                             "provider": provider,
                             "status": "skipped",
@@ -1074,7 +1115,7 @@ def route_generate(
                             "prompt_chars": len(reply.text or ""),
                             "estimated_request_bytes": 0,
                             "elapsed_ms": round((time.perf_counter() - route_started) * 1000, 1),
-                            "reason": f"continue_budget_exhausted:{route_timeout_sec}s",
+                            "reason": f"continue_budget_exhausted:{round(max(0.0, remaining_continue_budget_sec), 1)}s_left",
                         })
                         break
                     continue_rounds += 1
@@ -1091,6 +1132,7 @@ def route_generate(
                             effective_max_tokens,
                             temperature,
                         ),
+                        "remaining_budget_sec": round(remaining_continue_budget_sec, 1),
                         "reason": f"auto_continue_round_{continue_rounds}",
                     }
                     continue_started = time.perf_counter()
@@ -1100,6 +1142,7 @@ def route_generate(
                         max_tokens=effective_max_tokens,
                         temperature=temperature,
                         provider_profile=provider_profile,
+                        timeout_override=remaining_continue_budget_sec,
                     )
                     continue_trace["elapsed_ms"] = round((time.perf_counter() - continue_started) * 1000, 1)
                     continue_trace["status"] = "ok" if continuation and strip_redundant(continuation.text) else "error"
