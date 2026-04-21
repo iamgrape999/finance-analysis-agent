@@ -85,6 +85,9 @@ LIGHT_SUMMARY_CHARS = int(os.getenv("LIGHT_SUMMARY_CHARS", "480"))
 LIGHT_GLOBAL_MEMORY_CHARS = int(os.getenv("LIGHT_GLOBAL_MEMORY_CHARS", "320"))
 LIGHT_USER_MESSAGE_CHARS = int(os.getenv("LIGHT_USER_MESSAGE_CHARS", "1600"))
 LIGHT_HISTORY_TURNS = int(os.getenv("LIGHT_HISTORY_TURNS", "0"))
+AUTO_CONTINUE_ENABLED = os.getenv("AUTO_CONTINUE_ENABLED", "true").lower() == "true"
+AUTO_CONTINUE_MAX_ROUNDS = int(os.getenv("AUTO_CONTINUE_MAX_ROUNDS", "2"))
+AUTO_CONTINUE_TAIL_CHARS = int(os.getenv("AUTO_CONTINUE_TAIL_CHARS", "1200"))
 
 SYSTEM_POLICY = (
     "你是 CathyChang AI，請用繁體中文回答。"
@@ -337,6 +340,81 @@ def _estimate_request_bytes(system_policy: str, prompt: str, max_tokens: int, te
         "temperature": float(temperature),
     }
     return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+
+
+def _usage_completion_tokens(meta: Dict[str, Any]) -> int:
+    usage = (meta or {}).get("usage") or {}
+    if not isinstance(usage, dict):
+        return 0
+    value = (
+        usage.get("completion_tokens")
+        or usage.get("output_tokens")
+        or usage.get("candidates_token_count")
+        or 0
+    )
+    try:
+        return int(value)
+    except Exception:
+        return 0
+
+
+def _looks_truncated_text(text: str) -> bool:
+    t = strip_redundant(text or "")
+    if not t:
+        return False
+    if t.endswith(("。", "！", "？", ".", "!", "?", "」", "』", "）", ")", "]", "】")):
+        return False
+    if t.endswith(("|", "：", ":", "、", "，", ",")):
+        return True
+    return True
+
+
+def _needs_auto_continue(reply: ModelReply, max_tokens: int) -> bool:
+    if not AUTO_CONTINUE_ENABLED:
+        return False
+    text = strip_redundant(reply.text or "")
+    if not text:
+        return False
+    completion_tokens = _usage_completion_tokens(reply.meta or {})
+    hit_output_cap = completion_tokens >= max(64, int(max_tokens) - 16)
+    return hit_output_cap and _looks_truncated_text(text)
+
+
+def _build_continue_prompt(base_prompt: str, partial_text: str) -> str:
+    tail = strip_redundant(partial_text or "")[-AUTO_CONTINUE_TAIL_CHARS:]
+    return (
+        f"{base_prompt}\n\n"
+        "[續寫要求]\n"
+        "上一則回答因輸出長度限制被截斷。請直接從中斷處續寫，不要重複前文，不要重新開頭。\n"
+        "若上一段是表格，請從尚未完成的列繼續補完；若上一段是條列，請接著補完剩餘項目。\n"
+        "只輸出續寫內容。\n\n"
+        "[上一版回答尾段]\n"
+        f"{tail}"
+    )
+
+
+def _call_provider_once(
+    provider: str,
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    provider_profile: Optional[Dict[str, Any]] = None,
+) -> Optional[ModelReply]:
+    effective_max_tokens = min(int(max_tokens), int((provider_profile or {}).get("max_tokens", max_tokens)))
+    effective_system_policy = str((provider_profile or {}).get("system_policy", SYSTEM_POLICY))
+    if provider == "openrouter":
+        return call_openrouter(prompt, max_tokens=effective_max_tokens, temperature=temperature)
+    if provider == "gemini":
+        return call_gemini(prompt, max_tokens=effective_max_tokens, temperature=temperature)
+    if provider == "cloudflare":
+        return call_cloudflare(prompt, max_tokens=effective_max_tokens, temperature=temperature, system_policy=effective_system_policy)
+    if provider == "groq":
+        return call_groq(prompt, max_tokens=effective_max_tokens, temperature=temperature, system_policy=effective_system_policy)
+    if provider == "fireworks":
+        return call_fireworks(prompt, max_tokens=effective_max_tokens, temperature=temperature)
+    if provider == "aws":
+        return call_aws(prompt, max_tokens=effective_max_tokens, temperature=temperature)
+    return None
 
 
 def clean_model_output(text: str) -> str:
@@ -924,33 +1002,64 @@ def route_generate(prompt: Any, max_tokens: int = MAX_OUTPUT_TOKENS, temperature
                 "estimated_request_bytes": request_bytes,
             })
             started = time.perf_counter()
-            if provider == "openrouter":
-                reply = call_openrouter(provider_prompt, max_tokens=effective_max_tokens, temperature=temperature)
-            if provider == "gemini":
-                reply = call_gemini(provider_prompt, max_tokens=effective_max_tokens, temperature=temperature)
-            if provider == "cloudflare":
-                reply = call_cloudflare(
-                    provider_prompt,
-                    max_tokens=effective_max_tokens,
-                    temperature=temperature,
-                    system_policy=effective_system_policy,
-                )
-            if provider == "groq":
-                reply = call_groq(
-                    provider_prompt,
-                    max_tokens=effective_max_tokens,
-                    temperature=temperature,
-                    system_policy=effective_system_policy,
-                )
-            if provider == "fireworks":
-                reply = call_fireworks(provider_prompt, max_tokens=effective_max_tokens, temperature=temperature)
-            if provider == "aws":
-                reply = call_aws(provider_prompt, max_tokens=effective_max_tokens, temperature=temperature)
+            reply = _call_provider_once(
+                provider,
+                provider_prompt,
+                max_tokens=effective_max_tokens,
+                temperature=temperature,
+                provider_profile=provider_profile,
+            )
             trace["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
             trace["status"] = "ok"
             provider_trace.append(trace)
             if reply is not None:
                 reply.meta = dict(reply.meta or {})
+                continue_rounds = 0
+                while continue_rounds < AUTO_CONTINUE_MAX_ROUNDS and _needs_auto_continue(reply, effective_max_tokens):
+                    continue_rounds += 1
+                    continue_prompt = _build_continue_prompt(provider_prompt, reply.text)
+                    continue_trace: Dict[str, Any] = {
+                        "provider": provider,
+                        "status": "continuing",
+                        "context_kind": context_kind,
+                        "prompt_tokens": token_est(continue_prompt),
+                        "prompt_chars": len(continue_prompt),
+                        "estimated_request_bytes": _estimate_request_bytes(
+                            effective_system_policy,
+                            continue_prompt,
+                            effective_max_tokens,
+                            temperature,
+                        ),
+                        "reason": f"auto_continue_round_{continue_rounds}",
+                    }
+                    continue_started = time.perf_counter()
+                    continuation = _call_provider_once(
+                        provider,
+                        continue_prompt,
+                        max_tokens=effective_max_tokens,
+                        temperature=temperature,
+                        provider_profile=provider_profile,
+                    )
+                    continue_trace["elapsed_ms"] = round((time.perf_counter() - continue_started) * 1000, 1)
+                    continue_trace["status"] = "ok" if continuation and strip_redundant(continuation.text) else "error"
+                    provider_trace.append(continue_trace)
+                    if not continuation or not strip_redundant(continuation.text):
+                        break
+                    reply.text = strip_redundant((reply.text or "").rstrip() + "\n" + strip_redundant(continuation.text))
+                    merged_meta = dict(continuation.meta or {})
+                    base_usage = dict(reply.meta.get("usage") or {})
+                    cont_usage = dict(merged_meta.get("usage") or {})
+                    merged_usage: Dict[str, Any] = {}
+                    usage_keys = set(base_usage.keys()) | set(cont_usage.keys())
+                    for key in usage_keys:
+                        left = base_usage.get(key, 0)
+                        right = cont_usage.get(key, 0)
+                        if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                            merged_usage[key] = left + right
+                        else:
+                            merged_usage[key] = right or left
+                    reply.meta["usage"] = merged_usage or cont_usage or base_usage
+                reply.meta["continue_rounds"] = continue_rounds
                 reply.meta["provider_attempts"] = attempts[:]
                 if provider_meta := prompt_meta:
                     reply.meta["prompt_meta"] = provider_meta

@@ -83,6 +83,7 @@ class ChatResponse(BaseModel):
     failover_errors: List[Dict[str, str]] = Field(default_factory=list)
     provider_trace: List[Dict[str, Any]] = Field(default_factory=list)
     context_sizes: Dict[str, Any] = Field(default_factory=dict)
+    continue_rounds: int = 0
 
 
 class MessageRecord(BaseModel):
@@ -262,6 +263,7 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
         failover_errors=meta.get("failover_errors") or [],
         provider_trace=meta.get("provider_trace") or [],
         context_sizes=meta.get("context_sizes") or {},
+        continue_rounds=int(meta.get("continue_rounds") or 0),
     )
 
 

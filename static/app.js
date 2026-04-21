@@ -230,6 +230,7 @@ function addMessage(role, text, meta = {}) {
   if (usageText) metaParts.push(`tokens: ${usageText}`);
   if (meta.latency_s !== undefined && meta.latency_s !== null) metaParts.push(`time=${meta.latency_s}s`);
   if (meta.provider_attempts?.length) metaParts.push(`attempts=${meta.provider_attempts.join(">")}`);
+  if (meta.continue_rounds) metaParts.push(`continue=${meta.continue_rounds}`);
   if (metaParts.length) {
     const metaEl = document.createElement("div");
     metaEl.className = "message-meta";
@@ -654,7 +655,8 @@ async function sendMessage(message, endpoint = "/api/chat") {
       usage: data.usage,
       latency_s: data.latency_s,
       provider_attempts: data.provider_attempts,
-      failover_errors: data.failover_errors
+      failover_errors: data.failover_errors,
+      continue_rounds: data.continue_rounds
     });
     if (data.failover_errors?.length) {
       log(`failover: ${data.failover_errors.map((item) => `${item.provider} -> ${item.error}`).join(" ; ")}`, "WARN");
