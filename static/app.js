@@ -55,6 +55,7 @@ const userIdKey = "finance_agent_user_id";
 const apiBaseKey = "finance_agent_api_base";
 const passwordKey = "finance_agent_app_password";
 const responseModeKey = "finance_agent_response_mode";
+const CHAT_REQUEST_TIMEOUT_MS = 60000;
 const responsePresets = {
   fast: {
     label: "快速短答",
@@ -86,6 +87,7 @@ let providerReadiness = {};
 let modelDefaults = {};
 let appPassword = localStorage.getItem(passwordKey) || "";
 responseModeInput.value = localStorage.getItem(responseModeKey) || "fast";
+let lastMobileLayoutState = isMobileLayout();
 
 function makeThreadId() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -165,13 +167,23 @@ function currentResponsePreset() {
   return responsePresets[responseModeInput.value] || responsePresets.fast;
 }
 
+function mobileProviderOrderFor(modeKey) {
+  if (modeKey === "deep") {
+    return "groq,openrouter,gemini,cloudflare,aws,fireworks";
+  }
+  if (modeKey === "stable") {
+    return "groq,cloudflare,openrouter,gemini,aws,fireworks";
+  }
+  return "groq,cloudflare,openrouter,gemini,aws,fireworks";
+}
+
 function applyResponsePreset(shouldLog = true) {
   const preset = currentResponsePreset();
   maxTokensInput.value = String(preset.maxTokens);
-  providerOrderInput.value = preset.providerOrder;
+  providerOrderInput.value = isMobileLayout() ? mobileProviderOrderFor(responseModeInput.value) : preset.providerOrder;
   localStorage.setItem(responseModeKey, responseModeInput.value);
   if (shouldLog) {
-    log(`response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}; provider_order=${preset.providerOrder || "backend"}`, "DEBUG");
+    log(`response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}; provider_order=${providerOrderInput.value || "backend"}`, "DEBUG");
   }
 }
 
@@ -583,12 +595,16 @@ async function sendMessage(message, endpoint = "/api/chat") {
   }
   log(`calling ${endpoint}; user=${userId}; thread=${threadId}`, "CALL");
 
+  let timeoutId = null;
   try {
     const started = performance.now();
     const preset = currentResponsePreset();
+    const controller = new AbortController();
+    timeoutId = window.setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), CHAT_REQUEST_TIMEOUT_MS);
     const res = await fetch(apiUrl(endpoint), {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
+      signal: controller.signal,
       body: JSON.stringify({
         thread_id: threadId,
         message,
@@ -625,9 +641,15 @@ async function sendMessage(message, endpoint = "/api/chat") {
     loadThreads();
     loadGlobalMemory();
   } catch (err) {
-    addMessage("assistant", `發生錯誤：${err.message}`);
-    log(`chat failed: ${err.message}`, "FAIL");
+    const rawMessage = err?.name === "AbortError" || /timed out/i.test(err?.message || "")
+      ? "請求逾時，已中止這次對話。請稍後再試，或改用更快的回覆模式。"
+      : friendlyNetworkError(err);
+    addMessage("assistant", `發生錯誤：${rawMessage}`);
+    log(`chat failed: ${err?.name || "Error"} ${err?.message || String(err)}`, "FAIL");
   } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
     setBusy(false);
     input.focus();
   }
@@ -684,6 +706,14 @@ apiBaseInput.addEventListener("change", () => {
 
 responseModeInput.addEventListener("change", () => {
   applyResponsePreset(true);
+});
+
+window.addEventListener("resize", () => {
+  const nowMobile = isMobileLayout();
+  if (nowMobile === lastMobileLayoutState) return;
+  lastMobileLayoutState = nowMobile;
+  applyResponsePreset(false);
+  log(`layout changed: ${nowMobile ? "mobile" : "desktop"}; provider_order=${providerOrderInput.value || "backend"}`, "DEBUG");
 });
 
 selfTestButton.addEventListener("click", async () => {
