@@ -78,6 +78,9 @@ MAX_USER_MESSAGE_CHARS = int(os.getenv("MAX_USER_MESSAGE_CHARS", "20000"))
 MAX_HISTORY_TURN_CHARS = int(os.getenv("MAX_HISTORY_TURN_CHARS", "800"))
 MAX_SUMMARY_CHARS = int(os.getenv("MAX_SUMMARY_CHARS", "1200"))
 MAX_GLOBAL_MEMORY_CHARS = int(os.getenv("MAX_GLOBAL_MEMORY_CHARS", "1600"))
+LIGHT_PROVIDER_MAX_PROMPT_TOKENS = int(os.getenv("LIGHT_PROVIDER_MAX_PROMPT_TOKENS", "1000"))
+GROQ_MAX_OUTPUT_TOKENS = int(os.getenv("GROQ_MAX_OUTPUT_TOKENS", "1536"))
+CLOUDFLARE_MAX_OUTPUT_TOKENS = int(os.getenv("CLOUDFLARE_MAX_OUTPUT_TOKENS", "1536"))
 
 SYSTEM_POLICY = (
     "你是 CathyChang AI，請用繁體中文回答。"
@@ -209,6 +212,80 @@ def _clip_text(text: str, max_chars: int, label: str = "") -> str:
     suffix = f"\n\n[系統註記] {label or '內容'}已因長度限制截斷。"
     keep = max(0, int(max_chars) - len(suffix))
     return text[:keep].rstrip() + suffix
+
+
+def _extract_prompt_sections(prompt: str) -> Dict[str, str]:
+    sections = {"global": "", "summary": "", "history": "", "user": "", "preamble": ""}
+    current = "preamble"
+    buffer: List[str] = []
+    markers = {
+        "[全域記憶]": "global",
+        "[對話摘要]": "summary",
+        "[最近對話]": "history",
+        "[本輪使用者問題]": "user",
+    }
+
+    def _flush() -> None:
+        nonlocal buffer, current
+        text = "\n".join(buffer).strip()
+        if text:
+            existing = sections.get(current, "")
+            sections[current] = (existing + "\n" + text).strip() if existing else text
+        buffer = []
+
+    for raw_line in str(prompt or "").splitlines():
+        line = raw_line.strip()
+        if line in markers:
+            _flush()
+            current = markers[line]
+            continue
+        buffer.append(raw_line)
+    _flush()
+    return sections
+
+
+def _compact_prompt_for_provider(prompt: str, provider: str) -> Tuple[str, Dict[str, Any]]:
+    provider = (provider or "").strip().lower()
+    if provider not in {"groq", "cloudflare"}:
+        return prompt, {"mode": "full", "prompt_tokens": token_est(prompt)}
+
+    sections = _extract_prompt_sections(prompt)
+    header = (
+        "[系統註記] 為降低 413 / timeout 風險，已自動省略較長的歷史脈絡；"
+        "請優先根據本輪問題與必要摘要回答。"
+    )
+
+    candidate_parts: List[str] = []
+    if sections.get("user"):
+        candidate_parts.append("[本輪使用者問題]\n" + sections["user"])
+    if sections.get("summary"):
+        candidate_parts.insert(0, "[對話摘要]\n" + sections["summary"])
+    if sections.get("global"):
+        candidate_parts.insert(0, "[全域記憶]\n" + sections["global"])
+
+    compact = "\n\n".join([header] + candidate_parts).strip()
+
+    # Groq / Cloudflare 優先走「無歷史」版本，真的還太長才再縮 user。
+    if token_est(compact) > LIGHT_PROVIDER_MAX_PROMPT_TOKENS:
+        user_text = sections.get("user") or prompt
+        max_user_chars = max(1000, int(LIGHT_PROVIDER_MAX_PROMPT_TOKENS / max(TOKEN_EST_RATIO, 0.1)) - 400)
+        compact = (
+            header
+            + "\n\n"
+            + "[本輪使用者問題]\n"
+            + _clip_text(user_text, max_user_chars, f"{provider} 轻量輸入")
+        )
+        return compact, {
+            "mode": "user_only",
+            "prompt_tokens": token_est(compact),
+            "light_budget": LIGHT_PROVIDER_MAX_PROMPT_TOKENS,
+        }
+
+    return compact, {
+        "mode": "no_history",
+        "prompt_tokens": token_est(compact),
+        "light_budget": LIGHT_PROVIDER_MAX_PROMPT_TOKENS,
+    }
 
 
 def clean_model_output(text: str) -> str:
@@ -539,7 +616,7 @@ def call_groq(prompt: str, max_tokens: int, temperature: float) -> ModelReply:
             {"role": "system", "content": SYSTEM_POLICY},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": min(int(max_tokens), 4096),
+        "max_tokens": min(int(max_tokens), GROQ_MAX_OUTPUT_TOKENS),
         "temperature": float(temperature),
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=_chat_timeout("groq"))
@@ -639,7 +716,7 @@ def call_cloudflare(prompt: str, max_tokens: int, temperature: float) -> ModelRe
             {"role": "system", "content": SYSTEM_POLICY},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": min(int(max_tokens), 4096),
+        "max_tokens": min(int(max_tokens), CLOUDFLARE_MAX_OUTPUT_TOKENS),
         "temperature": float(temperature),
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=_chat_timeout("cloudflare"))
@@ -738,22 +815,34 @@ def route_generate(prompt: str, max_tokens: int = MAX_OUTPUT_TOKENS, temperature
     for provider in providers:
         attempts.append(provider)
         try:
+            provider_prompt = prompt
+            prompt_meta: Dict[str, Any] = {"mode": "full", "prompt_tokens": token_est(prompt)}
+            if provider in {"groq", "cloudflare"}:
+                provider_prompt, prompt_meta = _compact_prompt_for_provider(prompt, provider)
+                debug_log(
+                    provider,
+                    f"prompt_compact mode={prompt_meta.get('mode')} prompt_tokens={prompt_meta.get('prompt_tokens')} "
+                    f"budget={prompt_meta.get('light_budget', LIGHT_PROVIDER_MAX_PROMPT_TOKENS)}"
+                )
+
             reply: Optional[ModelReply] = None
             if provider == "openrouter":
-                reply = call_openrouter(prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_openrouter(provider_prompt, max_tokens=max_tokens, temperature=temperature)
             if provider == "gemini":
-                reply = call_gemini(prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_gemini(provider_prompt, max_tokens=max_tokens, temperature=temperature)
             if provider == "cloudflare":
-                reply = call_cloudflare(prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_cloudflare(provider_prompt, max_tokens=max_tokens, temperature=temperature)
             if provider == "groq":
-                reply = call_groq(prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_groq(provider_prompt, max_tokens=max_tokens, temperature=temperature)
             if provider == "fireworks":
-                reply = call_fireworks(prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_fireworks(provider_prompt, max_tokens=max_tokens, temperature=temperature)
             if provider == "aws":
-                reply = call_aws(prompt, max_tokens=max_tokens, temperature=temperature)
+                reply = call_aws(provider_prompt, max_tokens=max_tokens, temperature=temperature)
             if reply is not None:
                 reply.meta = dict(reply.meta or {})
                 reply.meta["provider_attempts"] = attempts[:]
+                if provider_meta := prompt_meta:
+                    reply.meta["prompt_meta"] = provider_meta
                 if errors:
                     reply.meta["failover_errors"] = [{"provider": p, "error": e} for p, e in errors]
                 return reply
