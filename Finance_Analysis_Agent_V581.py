@@ -47,6 +47,9 @@ GLOBAL_FACTS_FILENAME = "facts.json"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free").strip()
 
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "").strip()
+CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b").strip()
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 
@@ -66,7 +69,7 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
 AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1")).strip()
 AWS_BEDROCK_MODEL = os.getenv("AWS_BEDROCK_MODEL", "anthropic.claude-3-haiku-20240307-v1:0").strip()
 
-AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "openrouter,cloudflare,groq,aws,fireworks,gemini")
+AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "cerebras,openrouter,cloudflare,groq,aws,fireworks,gemini")
 AGENT_PROVIDER_DISABLE = os.getenv("AGENT_PROVIDER_DISABLE", "").lower()
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 REQUEST_TIMEOUT_SEC = int(os.getenv("REQUEST_TIMEOUT_SEC", "120"))
@@ -414,6 +417,8 @@ def _call_provider_once(
     effective_system_policy = str((provider_profile or {}).get("system_policy", SYSTEM_POLICY))
     if provider == "openrouter":
         return call_openrouter(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+    if provider == "cerebras":
+        return call_cerebras(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "gemini":
         return call_gemini(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "cloudflare":
@@ -626,6 +631,7 @@ def delete_thread_memory(thread_id: str, user_id: Optional[str] = None) -> bool:
 
 def provider_readiness() -> Dict[str, bool]:
     return {
+        "cerebras": bool(CEREBRAS_API_KEY),
         "openrouter": bool(OPENROUTER_API_KEY),
         "gemini": bool(GEMINI_API_KEY),
         "cloudflare": bool(CF_API_TOKEN and CF_ACCOUNT_ID),
@@ -796,6 +802,52 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_ov
         debug_log("openrouter", f"[EMPTY CONTENT] {summary}")
         raise RuntimeError(f"OpenRouter returned empty content; {summary}")
     return ModelReply(text=text, meta={"provider": "openrouter", "model": data.get("model", model), "usage": data.get("usage")})
+
+
+def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    del timeout_override
+    model = os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL).strip() or CEREBRAS_MODEL
+    try:
+        from cerebras.cloud.sdk import Cerebras  # type: ignore
+    except Exception as exc:
+        raise RuntimeError("cerebras-cloud-sdk is not installed") from exc
+
+    client = Cerebras(api_key=CEREBRAS_API_KEY)
+    completion = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": SYSTEM_POLICY},
+            {"role": "user", "content": prompt},
+        ],
+        model=model,
+        max_completion_tokens=int(max_tokens),
+        temperature=float(temperature),
+        top_p=1,
+        stream=False,
+    )
+    choices = getattr(completion, "choices", None) or []
+    text = ""
+    if choices:
+        message = getattr(choices[0], "message", None)
+        text = getattr(message, "content", "") or ""
+    if not text:
+        raise RuntimeError("Cerebras returned empty content")
+
+    usage_obj = getattr(completion, "usage", None)
+    usage: Dict[str, Any] = {}
+    if usage_obj is not None:
+        if hasattr(usage_obj, "model_dump"):
+            try:
+                usage = usage_obj.model_dump()
+            except Exception:
+                usage = {}
+        elif isinstance(usage_obj, dict):
+            usage = usage_obj
+        else:
+            for attr in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                value = getattr(usage_obj, attr, None)
+                if value is not None:
+                    usage[attr] = value
+    return ModelReply(text=str(text).strip(), meta={"provider": "cerebras", "model": model, "usage": usage})
 
 
 def call_groq(
