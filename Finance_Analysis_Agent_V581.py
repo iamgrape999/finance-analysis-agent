@@ -649,15 +649,10 @@ def provider_readiness() -> Dict[str, bool]:
 
 def provider_diagnostics() -> Dict[str, Any]:
     diag: Dict[str, Any] = {
-        "mistral_import_ok": False,
+        "mistral_import_ok": True,
         "mistral_import_error": "",
+        "mistral_client_mode": "http",
     }
-    try:
-        from mistralai import Mistral  # type: ignore
-
-        diag["mistral_import_ok"] = Mistral is not None
-    except Exception as exc:
-        diag["mistral_import_error"] = f"{type(exc).__name__}: {exc}"
     return diag
 
 
@@ -871,78 +866,52 @@ def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_over
 
 
 def call_mistral(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    del timeout_override
     model = os.getenv("MISTRAL_MODEL", MISTRAL_MODEL).strip() or MISTRAL_MODEL
-    try:
-        from mistralai import Mistral  # type: ignore
-    except Exception as exc:
-        raise RuntimeError(f"mistral import failed: {type(exc).__name__}: {exc}") from exc
-
-    def _extract_mistral_text(content: Any) -> str:
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content.strip()
-        if isinstance(content, list):
-            parts: List[str] = []
-            for item in content:
-                part = _extract_mistral_text(item)
-                if part:
-                    parts.append(part)
-            return "\n".join(parts).strip()
-        if isinstance(content, dict):
-            for key in ("text", "content", "value"):
-                value = content.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-            return ""
-        for attr in ("text", "content", "value"):
-            value = getattr(content, attr, None)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return ""
-
-    with Mistral(api_key=MISTRAL_API_KEY) as mistral:
-        res = mistral.chat.complete(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_POLICY},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=int(max_tokens),
-            temperature=float(temperature),
-            stream=False,
-        )
-
-    choices = getattr(res, "choices", None) or []
+    url = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1/chat/completions").strip()
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_POLICY},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": int(max_tokens),
+        "temperature": float(temperature),
+        "stream": False,
+    }
+    timeout_sec = _effective_timeout("mistral", timeout_override)
+    response = requests.post(url, headers=headers, json=payload, timeout=(10, timeout_sec))
+    if response.status_code >= 400:
+        detail = response.text[:1000]
+        raise RuntimeError(f"Mistral error {response.status_code}: {detail}")
+    data = response.json()
+    choices = data.get("choices") or []
     text = ""
     if choices:
-        message = getattr(choices[0], "message", None)
-        text = _extract_mistral_text(getattr(message, "content", "") or "")
+        message = choices[0].get("message") or {}
+        content = message.get("content", "")
+        if isinstance(content, str):
+            text = content.strip()
+        elif isinstance(content, list):
+            parts: List[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    for key in ("text", "content", "value"):
+                        value = item.get(key)
+                        if isinstance(value, str) and value.strip():
+                            parts.append(value.strip())
+                            break
+            text = "\n".join(parts).strip()
     if not text:
-        choice_types = []
-        for item in choices[:2]:
-            msg = getattr(item, "message", None)
-            content = getattr(msg, "content", None)
-            choice_types.append(type(content).__name__)
-        raise RuntimeError(f"Mistral returned empty content; choice_content_types={choice_types}")
-
-    usage_obj = getattr(res, "usage", None)
-    usage: Dict[str, Any] = {}
-    if usage_obj is not None:
-        if hasattr(usage_obj, "model_dump"):
-            try:
-                usage = usage_obj.model_dump()
-            except Exception:
-                usage = {}
-        elif isinstance(usage_obj, dict):
-            usage = usage_obj
-        else:
-            for attr in ("prompt_tokens", "completion_tokens", "total_tokens"):
-                value = getattr(usage_obj, attr, None)
-                if value is not None:
-                    usage[attr] = value
-    return ModelReply(text=str(text).strip(), meta={"provider": "mistral", "model": model, "usage": usage})
+        raise RuntimeError(f"Mistral returned empty content; keys={list(data.keys())} choices_len={len(choices)}")
+    usage = data.get("usage") or {}
+    return ModelReply(text=text, meta={"provider": "mistral", "model": model, "usage": usage})
 
 
 def call_groq(
