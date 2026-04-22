@@ -79,6 +79,11 @@ const responsePresets = {
     providerOrder: "cerebras,mistral,openrouter,aws,cloudflare,groq,fireworks,gemini"
   }
 };
+const mistralModeDefaults = {
+  fast: "mistral-small-latest",
+  stable: "mistral-medium-latest",
+  deep: "mistral-large-latest"
+};
 let userId = sanitizeUserId(localStorage.getItem(userIdKey) || "");
 passwordUserInput.value = userId;
 let threadId = localStorage.getItem(threadStorageKey()) || makeThreadId();
@@ -302,6 +307,9 @@ function collectModelOverrides() {
     if (el && el.value) {
       out[provider] = el.value;
     }
+  }
+  if (!out.mistral) {
+    out.mistral = mistralModeDefaults[responseModeInput.value] || mistralModeDefaults.fast;
   }
   return out;
 }
