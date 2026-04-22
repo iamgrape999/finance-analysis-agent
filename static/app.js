@@ -12,6 +12,7 @@ const closeLogButton = document.getElementById("closeLogButton");
 const advancedSettings = document.getElementById("advancedSettings");
 const modelInputs = {
   cerebras: document.getElementById("cerebrasModelInput"),
+  mistral: document.getElementById("mistralModelInput"),
   openrouter: document.getElementById("openrouterModelInput"),
   fireworks: document.getElementById("fireworksModelInput"),
   gemini: document.getElementById("geminiModelInput"),
@@ -63,19 +64,19 @@ const responsePresets = {
     label: "快速短答",
     maxTokens: 768,
     historyTurns: 2,
-    providerOrder: "cerebras,openrouter,groq,cloudflare,aws,fireworks,gemini"
+    providerOrder: "cerebras,mistral,openrouter,groq,cloudflare,aws,fireworks,gemini"
   },
   stable: {
     label: "穩定聊天",
     maxTokens: 2048,
     historyTurns: 4,
-    providerOrder: "cerebras,openrouter,cloudflare,groq,aws,fireworks,gemini"
+    providerOrder: "cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini"
   },
   deep: {
     label: "深度分析",
     maxTokens: 4096,
     historyTurns: 6,
-    providerOrder: "cerebras,openrouter,aws,cloudflare,groq,fireworks,gemini"
+    providerOrder: "cerebras,mistral,openrouter,aws,cloudflare,groq,fireworks,gemini"
   }
 };
 let userId = sanitizeUserId(localStorage.getItem(userIdKey) || "");
@@ -171,12 +172,12 @@ function currentResponsePreset() {
 
 function mobileProviderOrderFor(modeKey) {
   if (modeKey === "deep") {
-    return "cerebras,openrouter,aws,fireworks,cloudflare,groq,gemini";
+    return "cerebras,mistral,openrouter,aws,fireworks,cloudflare,groq,gemini";
   }
   if (modeKey === "stable") {
-    return "cerebras,openrouter,fireworks,aws,gemini";
+    return "cerebras,mistral,openrouter,fireworks,aws,gemini";
   }
-  return "cerebras,openrouter,fireworks,gemini";
+  return "cerebras,mistral,openrouter,fireworks,gemini";
 }
 
 function chatRequestTimeoutMsForMode(modeKey) {

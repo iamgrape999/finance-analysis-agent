@@ -18,6 +18,7 @@ from Finance_Analysis_Agent_V581 import (
     FIREWORKS_MODEL,
     GEMINI_MODEL,
     GROQ_MODEL,
+    MISTRAL_MODEL,
     MemoryAdapter,
     OPENROUTER_MODEL,
     call_fireworks,
@@ -45,9 +46,9 @@ MODE_DEFAULT_MAX_TOKENS = {
     "deep": int(os.getenv("DEEP_MODE_MAX_TOKENS", "4096")),
 }
 MODE_DEFAULT_PROVIDER_ORDER = {
-    "fast": os.getenv("FAST_MODE_PROVIDER_ORDER", "cerebras,openrouter,groq,cloudflare,aws,fireworks,gemini"),
-    "stable": os.getenv("STABLE_MODE_PROVIDER_ORDER", "cerebras,openrouter,cloudflare,groq,aws,fireworks,gemini"),
-    "deep": os.getenv("DEEP_MODE_PROVIDER_ORDER", "cerebras,openrouter,aws,cloudflare,groq,fireworks,gemini"),
+    "fast": os.getenv("FAST_MODE_PROVIDER_ORDER", "cerebras,mistral,openrouter,groq,cloudflare,aws,fireworks,gemini"),
+    "stable": os.getenv("STABLE_MODE_PROVIDER_ORDER", "cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini"),
+    "deep": os.getenv("DEEP_MODE_PROVIDER_ORDER", "cerebras,mistral,openrouter,aws,cloudflare,groq,fireworks,gemini"),
 }
 
 app = FastAPI(title=APP_NAME)
@@ -178,6 +179,7 @@ def health(
         "provider_order": resolve_provider_order(),
         "model_defaults": {
             "cerebras": os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL),
+            "mistral": os.getenv("MISTRAL_MODEL", MISTRAL_MODEL),
             "openrouter": os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL),
             "fireworks": os.getenv("FIREWORKS_MODEL", FIREWORKS_MODEL),
             "gemini": os.getenv("GEMINI_MODEL", GEMINI_MODEL),
@@ -202,6 +204,7 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
     previous_provider_order = os.environ.get("AGENT_PROVIDER_ORDER")
     model_env_keys = {
         "cerebras": "CEREBRAS_MODEL",
+        "mistral": "MISTRAL_MODEL",
         "openrouter": "OPENROUTER_MODEL",
         "fireworks": "FIREWORKS_MODEL",
         "gemini": "GEMINI_MODEL",

@@ -50,6 +50,9 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "").strip()
 CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b").strip()
 
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
+MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest").strip()
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 
@@ -69,7 +72,7 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
 AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1")).strip()
 AWS_BEDROCK_MODEL = os.getenv("AWS_BEDROCK_MODEL", "anthropic.claude-3-haiku-20240307-v1:0").strip()
 
-AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "cerebras,openrouter,cloudflare,groq,aws,fireworks,gemini")
+AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini")
 AGENT_PROVIDER_DISABLE = os.getenv("AGENT_PROVIDER_DISABLE", "").lower()
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 REQUEST_TIMEOUT_SEC = int(os.getenv("REQUEST_TIMEOUT_SEC", "120"))
@@ -419,6 +422,8 @@ def _call_provider_once(
         return call_openrouter(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "cerebras":
         return call_cerebras(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+    if provider == "mistral":
+        return call_mistral(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "gemini":
         return call_gemini(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "cloudflare":
@@ -632,6 +637,7 @@ def delete_thread_memory(thread_id: str, user_id: Optional[str] = None) -> bool:
 def provider_readiness() -> Dict[str, bool]:
     return {
         "cerebras": bool(CEREBRAS_API_KEY),
+        "mistral": bool(MISTRAL_API_KEY),
         "openrouter": bool(OPENROUTER_API_KEY),
         "gemini": bool(GEMINI_API_KEY),
         "cloudflare": bool(CF_API_TOKEN and CF_ACCOUNT_ID),
@@ -848,6 +854,60 @@ def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_over
                 if value is not None:
                     usage[attr] = value
     return ModelReply(text=str(text).strip(), meta={"provider": "cerebras", "model": model, "usage": usage})
+
+
+def call_mistral(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    del timeout_override
+    model = os.getenv("MISTRAL_MODEL", MISTRAL_MODEL).strip() or MISTRAL_MODEL
+    try:
+        from mistralai import Mistral  # type: ignore
+    except Exception as exc:
+        raise RuntimeError("mistralai is not installed") from exc
+
+    with Mistral(api_key=MISTRAL_API_KEY) as mistral:
+        res = mistral.chat.complete(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_POLICY},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=int(max_tokens),
+            temperature=float(temperature),
+            stream=False,
+        )
+
+    choices = getattr(res, "choices", None) or []
+    text = ""
+    if choices:
+        message = getattr(choices[0], "message", None)
+        text = getattr(message, "content", "") or ""
+    if isinstance(text, list):
+        parts: List[str] = []
+        for item in text:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        text = "\n".join(parts)
+    if not text:
+        raise RuntimeError("Mistral returned empty content")
+
+    usage_obj = getattr(res, "usage", None)
+    usage: Dict[str, Any] = {}
+    if usage_obj is not None:
+        if hasattr(usage_obj, "model_dump"):
+            try:
+                usage = usage_obj.model_dump()
+            except Exception:
+                usage = {}
+        elif isinstance(usage_obj, dict):
+            usage = usage_obj
+        else:
+            for attr in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                value = getattr(usage_obj, attr, None)
+                if value is not None:
+                    usage[attr] = value
+    return ModelReply(text=str(text).strip(), meta={"provider": "mistral", "model": model, "usage": usage})
 
 
 def call_groq(
