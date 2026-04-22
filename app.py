@@ -192,6 +192,18 @@ def health(
     }
 
 
+@app.get("/api/healthz")
+def healthz() -> Dict[str, Any]:
+    diagnostics = provider_diagnostics()
+    return {
+        "ok": True,
+        "app": APP_NAME,
+        "backend_version": APP_BUILD_ID,
+        "mistral_import_ok": bool(diagnostics.get("mistral_import_ok")),
+        "mistral_import_error": str(diagnostics.get("mistral_import_error") or ""),
+    }
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(
     req: ChatRequest,
