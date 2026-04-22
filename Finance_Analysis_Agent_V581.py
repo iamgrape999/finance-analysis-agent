@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Deployment-safe Finance/Analysis Agent wrapper.
 
@@ -864,6 +864,30 @@ def call_mistral(prompt: str, max_tokens: int, temperature: float, timeout_overr
     except Exception as exc:
         raise RuntimeError("mistralai is not installed") from exc
 
+    def _extract_mistral_text(content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: List[str] = []
+            for item in content:
+                part = _extract_mistral_text(item)
+                if part:
+                    parts.append(part)
+            return "\n".join(parts).strip()
+        if isinstance(content, dict):
+            for key in ("text", "content", "value"):
+                value = content.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return ""
+        for attr in ("text", "content", "value"):
+            value = getattr(content, attr, None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
     with Mistral(api_key=MISTRAL_API_KEY) as mistral:
         res = mistral.chat.complete(
             model=model,
@@ -880,17 +904,14 @@ def call_mistral(prompt: str, max_tokens: int, temperature: float, timeout_overr
     text = ""
     if choices:
         message = getattr(choices[0], "message", None)
-        text = getattr(message, "content", "") or ""
-    if isinstance(text, list):
-        parts: List[str] = []
-        for item in text:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict) and isinstance(item.get("text"), str):
-                parts.append(item["text"])
-        text = "\n".join(parts)
+        text = _extract_mistral_text(getattr(message, "content", "") or "")
     if not text:
-        raise RuntimeError("Mistral returned empty content")
+        choice_types = []
+        for item in choices[:2]:
+            msg = getattr(item, "message", None)
+            content = getattr(msg, "content", None)
+            choice_types.append(type(content).__name__)
+        raise RuntimeError(f"Mistral returned empty content; choice_content_types={choice_types}")
 
     usage_obj = getattr(res, "usage", None)
     usage: Dict[str, Any] = {}
@@ -1328,8 +1349,12 @@ def route_generate(
         f"本輪對話在 {route_timeout_sec} 秒內未能取得可用回覆，系統已主動結束這次嘗試。"
         "請改用較快的回覆模式、縮短問題，或稍後再試。"
     )
+    provider_error_text = (
+        f"指定 provider 無法產生可用回覆。最後錯誤：{errors[-1][0]} -> {errors[-1][1]}"
+        if errors else local_fallback_generate(prompt_bundle["heavy"])
+    )
     return ModelReply(
-        timeout_text if errors else local_fallback_generate(prompt_bundle["heavy"]),
+        timeout_text if any("timeout" in str(err).lower() for _, err in errors) else provider_error_text,
         {
             "provider": "local_fallback",
             "errors": errors,
