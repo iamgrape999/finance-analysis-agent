@@ -1,4 +1,4 @@
-const form = document.getElementById("chatForm");
+﻿const form = document.getElementById("chatForm");
 const input = document.getElementById("messageInput");
 const maxTokensInput = document.getElementById("maxTokensInput");
 const temperatureInput = document.getElementById("temperatureInput");
