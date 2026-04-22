@@ -647,6 +647,20 @@ def provider_readiness() -> Dict[str, bool]:
     }
 
 
+def provider_diagnostics() -> Dict[str, Any]:
+    diag: Dict[str, Any] = {
+        "mistral_import_ok": False,
+        "mistral_import_error": "",
+    }
+    try:
+        from mistralai import Mistral  # type: ignore
+
+        diag["mistral_import_ok"] = Mistral is not None
+    except Exception as exc:
+        diag["mistral_import_error"] = f"{type(exc).__name__}: {exc}"
+    return diag
+
+
 def resolve_provider_order() -> List[str]:
     ready = provider_readiness()
     provider_order = os.getenv("AGENT_PROVIDER_ORDER", AGENT_PROVIDER_ORDER)
@@ -862,7 +876,7 @@ def call_mistral(prompt: str, max_tokens: int, temperature: float, timeout_overr
     try:
         from mistralai import Mistral  # type: ignore
     except Exception as exc:
-        raise RuntimeError("mistralai is not installed") from exc
+        raise RuntimeError(f"mistral import failed: {type(exc).__name__}: {exc}") from exc
 
     def _extract_mistral_text(content: Any) -> str:
         if content is None:

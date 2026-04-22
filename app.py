@@ -30,6 +30,7 @@ from Finance_Analysis_Agent_V581 import (
     list_fireworks_serverless_models,
     load_global_facts,
     provider_readiness,
+    provider_diagnostics,
     resolve_provider_order,
     upsert_global_fact,
 )
@@ -176,6 +177,7 @@ def health(
         "configured_user_count": len(users),
         "storage_scope": f"users/{user_id}",
         "providers": provider_readiness(),
+        "provider_diagnostics": provider_diagnostics(),
         "provider_order": resolve_provider_order(),
         "model_defaults": {
             "cerebras": os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL),
