@@ -193,7 +193,9 @@ function chatRequestTimeoutMsForMode(modeKey) {
 function applyResponsePreset(shouldLog = true) {
   const preset = currentResponsePreset();
   maxTokensInput.value = String(preset.maxTokens);
-  providerOrderInput.value = isMobileLayout() ? mobileProviderOrderFor(responseModeInput.value) : preset.providerOrder;
+  if (!providerOrderInput.value) {
+    providerOrderInput.value = isMobileLayout() ? mobileProviderOrderFor(responseModeInput.value) : preset.providerOrder;
+  }
   localStorage.setItem(responseModeKey, responseModeInput.value);
   if (shouldLog) {
     log(`response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}; provider_order=${providerOrderInput.value || "backend"}`, "DEBUG");
@@ -302,6 +304,14 @@ function collectModelOverrides() {
     }
   }
   return out;
+}
+
+function effectiveProviderOrderForRequest() {
+  const explicitOrder = (providerOrderInput.value || "").trim();
+  if (explicitOrder) {
+    return explicitOrder;
+  }
+  return isMobileLayout() ? mobileProviderOrderFor(responseModeInput.value) : null;
 }
 
 async function checkHealth() {
@@ -625,7 +635,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
   collapseMobilePanels();
   input.value = "";
   setBusy(true);
-  const effectiveProviderOrder = isMobileLayout() ? mobileProviderOrderFor(responseModeInput.value) : (providerOrderInput.value || null);
+  const effectiveProviderOrder = effectiveProviderOrderForRequest();
   const firstProvider = (effectiveProviderOrder || "").split(",")[0]?.trim();
   if (firstProvider && providerReadiness[firstProvider] === false) {
     log(`${firstProvider} is selected first but not connected; backend will fail over to the next ready provider`, "WARN");
