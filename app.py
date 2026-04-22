@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import re
@@ -22,6 +22,7 @@ from Finance_Analysis_Agent_V581 import (
     MemoryAdapter,
     OPENROUTER_MODEL,
     call_fireworks,
+    call_mistral,
     chat_once_detailed,
     delete_global_fact,
     delete_thread_memory,
@@ -201,6 +202,10 @@ def healthz() -> Dict[str, Any]:
         "backend_version": APP_BUILD_ID,
         "mistral_import_ok": bool(diagnostics.get("mistral_import_ok")),
         "mistral_import_error": str(diagnostics.get("mistral_import_error") or ""),
+        "mistral_client_mode": str(diagnostics.get("mistral_client_mode") or ""),
+        "mistral_key_present": bool(diagnostics.get("mistral_key_present")),
+        "mistral_model": str(diagnostics.get("mistral_model") or ""),
+        "mistral_base_url": str(diagnostics.get("mistral_base_url") or ""),
     }
 
 
@@ -379,29 +384,46 @@ def provider_probe(
 ) -> Dict[str, Any]:
     require_auth(x_app_password, x_user_id)
     provider = provider.strip().lower()
-    previous_model = os.environ.get("FIREWORKS_MODEL")
+    previous_fireworks_model = os.environ.get("FIREWORKS_MODEL")
+    previous_mistral_model = os.environ.get("MISTRAL_MODEL")
     try:
-        if provider != "fireworks":
-            raise HTTPException(status_code=400, detail="Only fireworks probe is implemented.")
-        selected_model = model
-        if selected_model == "auto":
-            selected_model = first_fireworks_serverless_model()
-            if not selected_model:
-                return {"ok": False, "provider": "fireworks", "model": "auto", "error": "No Fireworks serverless models returned by /api/provider-models/fireworks."}
-        if selected_model:
-            os.environ["FIREWORKS_MODEL"] = selected_model
-        reply = call_fireworks("請只回覆 OK。", max_tokens=64, temperature=0.0)
-        return {"ok": True, "provider": "fireworks", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
+        if provider == "fireworks":
+            selected_model = model
+            if selected_model == "auto":
+                selected_model = first_fireworks_serverless_model()
+                if not selected_model:
+                    return {"ok": False, "provider": "fireworks", "model": "auto", "error": "No Fireworks serverless models returned by /api/provider-models/fireworks."}
+            if selected_model:
+                os.environ["FIREWORKS_MODEL"] = selected_model
+            reply = call_fireworks("請只回覆 OK。", max_tokens=64, temperature=0.0)
+            return {"ok": True, "provider": "fireworks", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
+
+        if provider == "mistral":
+            selected_model = (model or os.environ.get("MISTRAL_MODEL") or MISTRAL_MODEL).strip()
+            if selected_model:
+                os.environ["MISTRAL_MODEL"] = selected_model
+            reply = call_mistral("請只回覆 OK。", max_tokens=64, temperature=0.0)
+            return {"ok": True, "provider": "mistral", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
+
+        raise HTTPException(status_code=400, detail="Only fireworks and mistral probes are implemented.")
     except HTTPException:
         raise
     except Exception as exc:
-        return {"ok": False, "provider": provider, "model": model or os.environ.get("FIREWORKS_MODEL"), "error": str(exc)}
+        active_model = (
+            model
+            or (os.environ.get("FIREWORKS_MODEL") if provider == "fireworks" else None)
+            or (os.environ.get("MISTRAL_MODEL") if provider == "mistral" else None)
+        )
+        return {"ok": False, "provider": provider, "model": active_model, "error": f"{type(exc).__name__}: {exc}"}
     finally:
-        if previous_model is None:
+        if previous_fireworks_model is None:
             os.environ.pop("FIREWORKS_MODEL", None)
         else:
-            os.environ["FIREWORKS_MODEL"] = previous_model
-
+            os.environ["FIREWORKS_MODEL"] = previous_fireworks_model
+        if previous_mistral_model is None:
+            os.environ.pop("MISTRAL_MODEL", None)
+        else:
+            os.environ["MISTRAL_MODEL"] = previous_mistral_model
 
 @app.get("/api/provider-models/{provider}")
 def provider_models(

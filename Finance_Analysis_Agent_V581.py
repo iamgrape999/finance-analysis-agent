@@ -652,6 +652,9 @@ def provider_diagnostics() -> Dict[str, Any]:
         "mistral_import_ok": True,
         "mistral_import_error": "",
         "mistral_client_mode": "http",
+        "mistral_key_present": bool(MISTRAL_API_KEY),
+        "mistral_model": os.getenv("MISTRAL_MODEL", MISTRAL_MODEL).strip() or MISTRAL_MODEL,
+        "mistral_base_url": os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1/chat/completions").strip(),
     }
     return diag
 
