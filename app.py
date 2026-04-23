@@ -206,6 +206,7 @@ def healthz() -> Dict[str, Any]:
         "backend_version": APP_BUILD_ID,
         "nvidia_key_present": bool(diagnostics.get("nvidia_key_present")),
         "nvidia_model": str(diagnostics.get("nvidia_model") or ""),
+        "nvidia_effective_model": str(diagnostics.get("nvidia_effective_model") or ""),
         "nvidia_base_url": str(diagnostics.get("nvidia_base_url") or ""),
         "nvidia_probe_path": f"/api/provider-probe/nvidia?model={diagnostics.get('nvidia_model') or ''}",
         "nvidia_model_list_path": "/api/provider-models/nvidia",

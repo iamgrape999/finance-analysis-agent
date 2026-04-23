@@ -53,6 +53,20 @@ CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b").strip()
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "").strip()
 NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-4-maverick-17b-128e-instruct").strip()
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1/chat/completions").strip()
+NVIDIA_MODEL_ALIASES = {
+    "gpt-oss-120b": "openai/gpt-oss-120b",
+    "qwen-3-235b-a22b-instruct-2507": "qwen/qwen-3-235b-a22b-instruct-2507",
+    "zai-glm-4.7": "zai-org/glm-4.7",
+    "kimi-k2-instruct": "moonshotai/kimi-k2-instruct",
+    "kimi-k2-instruct-0905": "moonshotai/kimi-k2-instruct-0905",
+    "deepseek-v3.2": "deepseek-ai/deepseek-v3.2",
+    "deepseek-v3.1-terminus": "deepseek-ai/deepseek-v3.1-terminus",
+    "step-3.5-flash": "stepfun-ai/step-3.5-flash",
+    "gemma-3-27b-it": "google/gemma-3-27b-it",
+    "mistral-large-3.675b-instruct-2512": "mistralai/mistral-large-3.675b-instruct-2512",
+    "mistral-nemotron": "mistralai/mistral-nemotron",
+    "qwen3-coder-480b-a35b-instruct": "qwen/qwen3-coder-480b-a35b-instruct",
+}
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest").strip()
@@ -655,9 +669,11 @@ def provider_readiness() -> Dict[str, bool]:
 
 
 def provider_diagnostics() -> Dict[str, Any]:
+    raw_nvidia_model = os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL
     diag: Dict[str, Any] = {
         "nvidia_key_present": bool(NVIDIA_API_KEY),
-        "nvidia_model": os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL,
+        "nvidia_model": raw_nvidia_model,
+        "nvidia_effective_model": NVIDIA_MODEL_ALIASES.get(raw_nvidia_model, raw_nvidia_model),
         "nvidia_base_url": os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL,
         "mistral_import_ok": True,
         "mistral_import_error": "",
@@ -691,74 +707,74 @@ def list_nvidia_free_models() -> List[Dict[str, Any]]:
             "free_endpoint": True,
         },
         {
-            "name": "gpt-oss-120b",
+            "name": "openai/gpt-oss-120b",
             "display_name": "OpenAI GPT OSS 120B",
             "tier": "production",
             "free_endpoint": True,
         },
         {
-            "name": "qwen-3-235b-a22b-instruct-2507",
+            "name": "qwen/qwen-3-235b-a22b-instruct-2507",
             "display_name": "Qwen 3 235B Instruct",
             "tier": "preview",
             "free_endpoint": True,
             "note": "Deprecated on May 27, 2026",
         },
         {
-            "name": "zai-glm-4.7",
+            "name": "zai-org/glm-4.7",
             "display_name": "Z.ai GLM 4.7",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "kimi-k2-instruct",
+            "name": "moonshotai/kimi-k2-instruct",
             "display_name": "Moonshot Kimi K2 Instruct",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "kimi-k2-instruct-0905",
+            "name": "moonshotai/kimi-k2-instruct-0905",
             "display_name": "Moonshot Kimi K2 Instruct 0905",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "deepseek-v3.2",
+            "name": "deepseek-ai/deepseek-v3.2",
             "display_name": "DeepSeek V3.2",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "deepseek-v3.1-terminus",
+            "name": "deepseek-ai/deepseek-v3.1-terminus",
             "display_name": "DeepSeek V3.1 Terminus",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "step-3.5-flash",
+            "name": "stepfun-ai/step-3.5-flash",
             "display_name": "Stepfun Step 3.5 Flash",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "gemma-3-27b-it",
+            "name": "google/gemma-3-27b-it",
             "display_name": "Google Gemma 3 27B IT",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "mistral-large-3.675b-instruct-2512",
+            "name": "mistralai/mistral-large-3.675b-instruct-2512",
             "display_name": "Mistral Large 3.675B Instruct 2512",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "mistral-nemotron",
+            "name": "mistralai/mistral-nemotron",
             "display_name": "Mistral Nemotron",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "qwen3-coder-480b-a35b-instruct",
+            "name": "qwen/qwen3-coder-480b-a35b-instruct",
             "display_name": "Qwen3 Coder 480B A35B Instruct",
             "tier": "preview",
             "free_endpoint": True,
@@ -917,7 +933,8 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_ov
 
 
 def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL
+    requested_model = os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL
+    model = NVIDIA_MODEL_ALIASES.get(requested_model, requested_model)
     url = os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL
     headers = {
         "Authorization": f"Bearer {NVIDIA_API_KEY}",
@@ -970,7 +987,15 @@ def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_overri
             f"keys={list(data.keys())}"
         )
     usage = data.get("usage") or {}
-    return ModelReply(text=text, meta={"provider": "nvidia", "model": data.get("model", model), "usage": usage})
+    return ModelReply(
+        text=text,
+        meta={
+            "provider": "nvidia",
+            "model": data.get("model", model),
+            "requested_model": requested_model,
+            "usage": usage,
+        },
+    )
 
 
 def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
