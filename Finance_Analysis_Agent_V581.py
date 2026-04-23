@@ -940,12 +940,35 @@ def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_overri
     timeout_sec = _effective_timeout("nvidia", timeout_override)
     response = requests.post(url, headers=headers, json=payload, timeout=(10, timeout_sec))
     if response.status_code >= 400:
-        detail = response.text[:1000]
-        raise RuntimeError(f"NVIDIA error {response.status_code}: {detail}")
-    data = response.json()
+        content_type = response.headers.get("content-type", "")
+        body = (response.text or "")[:1200].replace("\n", "\\n").replace("\r", "\\r")
+        raise RuntimeError(
+            "NVIDIA error "
+            f"status={response.status_code}; "
+            f"model={model}; "
+            f"url={url}; "
+            f"content_type={content_type}; "
+            f"body={body}"
+        )
+    try:
+        data = response.json()
+    except Exception as exc:
+        body = (response.text or "")[:1200].replace("\n", "\\n").replace("\r", "\\r")
+        raise RuntimeError(
+            "NVIDIA returned non-JSON response; "
+            f"model={model}; "
+            f"url={url}; "
+            f"status={response.status_code}; "
+            f"body={body}"
+        ) from exc
     text = _extract_openai_compatible_text(data)
     if not text:
-        raise RuntimeError(f"NVIDIA returned empty content; keys={list(data.keys())}")
+        raise RuntimeError(
+            "NVIDIA returned empty content; "
+            f"model={model}; "
+            f"url={url}; "
+            f"keys={list(data.keys())}"
+        )
     usage = data.get("usage") or {}
     return ModelReply(text=text, meta={"provider": "nvidia", "model": data.get("model", model), "usage": usage})
 
