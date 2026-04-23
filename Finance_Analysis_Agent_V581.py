@@ -53,17 +53,25 @@ CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b").strip()
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "").strip()
 NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-4-maverick-17b-128e-instruct").strip()
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1/chat/completions").strip()
+NVIDIA_NEMOTRON_SUPER_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 NVIDIA_MODEL_ALIASES = {
     "gpt-oss-120b": "openai/gpt-oss-120b",
-    "nemotron-3-super-120b-a12b": "nvidia/nemotron-3-super-120b-a12b",
-    "qwen-3-235b-a22b-instruct-2507": "qwen/qwen3-235b-a22b",
-    "qwen/qwen-3-235b-a22b-instruct-2507": "qwen/qwen3-235b-a22b",
-    "zai-glm-4.7": "z-ai/glm4_7",
-    "zai-org/glm-4.7": "z-ai/glm4_7",
-    "glm5_1": "z-ai/glm5_1",
-    "zai-glm5_1": "z-ai/glm5_1",
-    "zai-glm-5.1": "z-ai/glm5_1",
-    "zai-org/glm-5.1": "z-ai/glm5_1",
+    "nemotron-3-super-120b-a12b": NVIDIA_NEMOTRON_SUPER_MODEL,
+    "qwen-3-235b-a22b-instruct-2507": "qwen/qwen3-coder-480b-a35b-instruct",
+    "qwen/qwen-3-235b-a22b-instruct-2507": "qwen/qwen3-coder-480b-a35b-instruct",
+    "qwen/qwen3-235b-a22b": "qwen/qwen3-coder-480b-a35b-instruct",
+    "qwen3.5-122b-a10b": "qwen/qwen3.5-122b-a10b",
+    "zai-glm-4.7": "z-ai/glm-4.7",
+    "zai-org/glm-4.7": "z-ai/glm-4.7",
+    "z-ai/glm4_7": "z-ai/glm-4.7",
+    "glm4_7": "z-ai/glm-4.7",
+    "glm-4.7": "z-ai/glm-4.7",
+    "glm5_1": "z-ai/glm-5.1",
+    "zai-glm5_1": "z-ai/glm-5.1",
+    "z-ai/glm5_1": "z-ai/glm-5.1",
+    "zai-glm-5.1": "z-ai/glm-5.1",
+    "zai-org/glm-5.1": "z-ai/glm-5.1",
+    "glm-5.1": "z-ai/glm-5.1",
     "minimax-m2.7": "minimaxai/minimax-m2.7",
     "minimax/minimax-m2.7": "minimaxai/minimax-m2.7",
     "kimi-k2-instruct": "moonshotai/kimi-k2-instruct",
@@ -688,7 +696,7 @@ def provider_diagnostics() -> Dict[str, Any]:
     diag: Dict[str, Any] = {
         "nvidia_key_present": bool(NVIDIA_API_KEY),
         "nvidia_model": raw_nvidia_model,
-        "nvidia_effective_model": NVIDIA_MODEL_ALIASES.get(raw_nvidia_model, raw_nvidia_model),
+        "nvidia_effective_model": _resolve_nvidia_model(raw_nvidia_model),
         "nvidia_base_url": os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL,
         "mistral_import_ok": True,
         "mistral_import_error": "",
@@ -728,25 +736,32 @@ def list_nvidia_free_models() -> List[Dict[str, Any]]:
             "free_endpoint": True,
         },
         {
-            "name": "nvidia/nemotron-3-super-120b-a12b",
+            "name": NVIDIA_NEMOTRON_SUPER_MODEL,
             "display_name": "NVIDIA Nemotron 3 Super 120B A12B",
             "tier": "preview",
             "free_endpoint": True,
+            "attempt_timeout_sec": 30,
         },
         {
-            "name": "qwen/qwen3-235b-a22b",
-            "display_name": "Qwen 3 235B Instruct",
+            "name": "qwen/qwen3-coder-480b-a35b-instruct",
+            "display_name": "Qwen3 Coder 480B A35B Instruct",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "z-ai/glm4_7",
+            "name": "qwen/qwen3.5-122b-a10b",
+            "display_name": "Qwen 3.5 122B A10B",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "z-ai/glm-4.7",
             "display_name": "Z.ai GLM 4.7",
             "tier": "preview",
             "free_endpoint": True,
         },
         {
-            "name": "z-ai/glm5_1",
+            "name": "z-ai/glm-5.1",
             "display_name": "Z.ai GLM 5.1",
             "tier": "preview",
             "free_endpoint": True,
@@ -814,12 +829,6 @@ def list_nvidia_free_models() -> List[Dict[str, Any]]:
         {
             "name": "mistralai/mistral-nemotron",
             "display_name": "Mistral Nemotron",
-            "tier": "preview",
-            "free_endpoint": True,
-        },
-        {
-            "name": "qwen/qwen3-coder-480b-a35b-instruct",
-            "display_name": "Qwen3 Coder 480B A35B Instruct",
             "tier": "preview",
             "free_endpoint": True,
         },
@@ -943,6 +952,11 @@ def _effective_timeout(provider: str, timeout_override: Optional[float] = None) 
     return max(3, min(base_timeout, requested))
 
 
+def _resolve_nvidia_model(model: Optional[str] = None) -> str:
+    requested = (model or os.getenv("NVIDIA_MODEL", NVIDIA_MODEL) or NVIDIA_MODEL).strip()
+    return NVIDIA_MODEL_ALIASES.get(requested, requested)
+
+
 def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
     model = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL).strip() or OPENROUTER_MODEL
     url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1") + "/chat/completions"
@@ -977,8 +991,7 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_ov
 
 
 def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    requested_model = os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL
-    model = NVIDIA_MODEL_ALIASES.get(requested_model, requested_model)
+    model = _resolve_nvidia_model()
     url = os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL
     headers = {
         "Authorization": f"Bearer {NVIDIA_API_KEY}",
@@ -999,6 +1012,8 @@ def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_overri
         "stream": False,
     }
     timeout_sec = _effective_timeout("nvidia", timeout_override)
+    if model == NVIDIA_NEMOTRON_SUPER_MODEL:
+        timeout_sec = max(timeout_sec, min(30, int(REQUEST_TIMEOUT_SEC)))
     response = requests.post(url, headers=headers, json=payload, timeout=(10, timeout_sec))
     if response.status_code >= 400:
         content_type = response.headers.get("content-type", "")
@@ -1397,6 +1412,8 @@ def route_generate(
         try:
             remaining_budget_sec = max(3.0, route_timeout_sec - (time.perf_counter() - route_started))
             effective_attempt_timeout_sec = min(remaining_budget_sec, float(per_attempt_timeout_sec))
+            if provider == "nvidia" and _resolve_nvidia_model() == NVIDIA_NEMOTRON_SUPER_MODEL:
+                effective_attempt_timeout_sec = min(remaining_budget_sec, 30.0)
             context_kind = "light" if provider in {"groq", "cloudflare"} else "heavy"
             provider_prompt = prompt_bundle[context_kind]
             prompt_meta: Dict[str, Any] = {"mode": context_kind, "prompt_tokens": token_est(provider_prompt)}
