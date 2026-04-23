@@ -50,6 +50,10 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "").strip()
 CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b").strip()
 
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "").strip()
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-4-maverick-17b-128e-instruct").strip()
+NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1/chat/completions").strip()
+
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest").strip()
 
@@ -72,7 +76,7 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
 AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1")).strip()
 AWS_BEDROCK_MODEL = os.getenv("AWS_BEDROCK_MODEL", "anthropic.claude-3-haiku-20240307-v1:0").strip()
 
-AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini")
+AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "nvidia,cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini")
 AGENT_PROVIDER_DISABLE = os.getenv("AGENT_PROVIDER_DISABLE", "").lower()
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 REQUEST_TIMEOUT_SEC = int(os.getenv("REQUEST_TIMEOUT_SEC", "120"))
@@ -420,6 +424,8 @@ def _call_provider_once(
     effective_system_policy = str((provider_profile or {}).get("system_policy", SYSTEM_POLICY))
     if provider == "openrouter":
         return call_openrouter(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+    if provider == "nvidia":
+        return call_nvidia(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "cerebras":
         return call_cerebras(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "mistral":
@@ -636,6 +642,7 @@ def delete_thread_memory(thread_id: str, user_id: Optional[str] = None) -> bool:
 
 def provider_readiness() -> Dict[str, bool]:
     return {
+        "nvidia": bool(NVIDIA_API_KEY),
         "cerebras": bool(CEREBRAS_API_KEY),
         "mistral": bool(MISTRAL_API_KEY),
         "openrouter": bool(OPENROUTER_API_KEY),
@@ -649,6 +656,9 @@ def provider_readiness() -> Dict[str, bool]:
 
 def provider_diagnostics() -> Dict[str, Any]:
     diag: Dict[str, Any] = {
+        "nvidia_key_present": bool(NVIDIA_API_KEY),
+        "nvidia_model": os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL,
+        "nvidia_base_url": os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL,
         "mistral_import_ok": True,
         "mistral_import_error": "",
         "mistral_client_mode": "http",
@@ -670,6 +680,90 @@ def resolve_provider_order() -> List[str]:
         if provider and ready.get(provider) and provider not in disabled and provider not in out:
             out.append(provider)
     return out
+
+
+def list_nvidia_free_models() -> List[Dict[str, Any]]:
+    return [
+        {
+            "name": "meta/llama-4-maverick-17b-128e-instruct",
+            "display_name": "Llama 4 Maverick 17B 128E Instruct",
+            "tier": "production",
+            "free_endpoint": True,
+        },
+        {
+            "name": "gpt-oss-120b",
+            "display_name": "OpenAI GPT OSS 120B",
+            "tier": "production",
+            "free_endpoint": True,
+        },
+        {
+            "name": "qwen-3-235b-a22b-instruct-2507",
+            "display_name": "Qwen 3 235B Instruct",
+            "tier": "preview",
+            "free_endpoint": True,
+            "note": "Deprecated on May 27, 2026",
+        },
+        {
+            "name": "zai-glm-4.7",
+            "display_name": "Z.ai GLM 4.7",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "kimi-k2-instruct",
+            "display_name": "Moonshot Kimi K2 Instruct",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "kimi-k2-instruct-0905",
+            "display_name": "Moonshot Kimi K2 Instruct 0905",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "deepseek-v3.2",
+            "display_name": "DeepSeek V3.2",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "deepseek-v3.1-terminus",
+            "display_name": "DeepSeek V3.1 Terminus",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "step-3.5-flash",
+            "display_name": "Stepfun Step 3.5 Flash",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "gemma-3-27b-it",
+            "display_name": "Google Gemma 3 27B IT",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "mistral-large-3.675b-instruct-2512",
+            "display_name": "Mistral Large 3.675B Instruct 2512",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "mistral-nemotron",
+            "display_name": "Mistral Nemotron",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+        {
+            "name": "qwen3-coder-480b-a35b-instruct",
+            "display_name": "Qwen3 Coder 480B A35B Instruct",
+            "tier": "preview",
+            "free_endpoint": True,
+        },
+    ]
 
 
 def _extract_openai_compatible_text(data: Dict[str, Any]) -> str:
@@ -820,6 +914,40 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_ov
         debug_log("openrouter", f"[EMPTY CONTENT] {summary}")
         raise RuntimeError(f"OpenRouter returned empty content; {summary}")
     return ModelReply(text=text, meta={"provider": "openrouter", "model": data.get("model", model), "usage": data.get("usage")})
+
+
+def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    model = os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL
+    url = os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL
+    headers = {
+        "Authorization": f"Bearer {NVIDIA_API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_POLICY},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": int(max_tokens),
+        "temperature": float(temperature),
+        "top_p": 1.0,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stream": False,
+    }
+    timeout_sec = _effective_timeout("nvidia", timeout_override)
+    response = requests.post(url, headers=headers, json=payload, timeout=(10, timeout_sec))
+    if response.status_code >= 400:
+        detail = response.text[:1000]
+        raise RuntimeError(f"NVIDIA error {response.status_code}: {detail}")
+    data = response.json()
+    text = _extract_openai_compatible_text(data)
+    if not text:
+        raise RuntimeError(f"NVIDIA returned empty content; keys={list(data.keys())}")
+    usage = data.get("usage") or {}
+    return ModelReply(text=text, meta={"provider": "nvidia", "model": data.get("model", model), "usage": usage})
 
 
 def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:

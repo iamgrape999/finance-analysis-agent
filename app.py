@@ -19,16 +19,19 @@ from Finance_Analysis_Agent_V581 import (
     GEMINI_MODEL,
     GROQ_MODEL,
     MISTRAL_MODEL,
+    NVIDIA_MODEL,
     MemoryAdapter,
     OPENROUTER_MODEL,
     call_fireworks,
     call_mistral,
+    call_nvidia,
     chat_once_detailed,
     delete_global_fact,
     delete_thread_memory,
     first_fireworks_serverless_model,
     list_thread_summaries,
     list_fireworks_serverless_models,
+    list_nvidia_free_models,
     load_global_facts,
     provider_readiness,
     provider_diagnostics,
@@ -48,9 +51,9 @@ MODE_DEFAULT_MAX_TOKENS = {
     "deep": int(os.getenv("DEEP_MODE_MAX_TOKENS", "4096")),
 }
 MODE_DEFAULT_PROVIDER_ORDER = {
-    "fast": os.getenv("FAST_MODE_PROVIDER_ORDER", "cerebras,mistral,openrouter,groq,cloudflare,aws,fireworks,gemini"),
-    "stable": os.getenv("STABLE_MODE_PROVIDER_ORDER", "cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini"),
-    "deep": os.getenv("DEEP_MODE_PROVIDER_ORDER", "cerebras,mistral,openrouter,aws,cloudflare,groq,fireworks,gemini"),
+    "fast": os.getenv("FAST_MODE_PROVIDER_ORDER", "nvidia,cerebras,mistral,openrouter,groq,cloudflare,aws,fireworks,gemini"),
+    "stable": os.getenv("STABLE_MODE_PROVIDER_ORDER", "nvidia,cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini"),
+    "deep": os.getenv("DEEP_MODE_PROVIDER_ORDER", "nvidia,cerebras,mistral,openrouter,aws,cloudflare,groq,fireworks,gemini"),
 }
 
 app = FastAPI(title=APP_NAME)
@@ -181,6 +184,7 @@ def health(
         "provider_diagnostics": provider_diagnostics(),
         "provider_order": resolve_provider_order(),
         "model_defaults": {
+            "nvidia": os.getenv("NVIDIA_MODEL", NVIDIA_MODEL),
             "cerebras": os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL),
             "mistral": os.getenv("MISTRAL_MODEL", MISTRAL_MODEL),
             "openrouter": os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL),
@@ -200,6 +204,9 @@ def healthz() -> Dict[str, Any]:
         "ok": True,
         "app": APP_NAME,
         "backend_version": APP_BUILD_ID,
+        "nvidia_key_present": bool(diagnostics.get("nvidia_key_present")),
+        "nvidia_model": str(diagnostics.get("nvidia_model") or ""),
+        "nvidia_base_url": str(diagnostics.get("nvidia_base_url") or ""),
         "mistral_import_ok": bool(diagnostics.get("mistral_import_ok")),
         "mistral_import_error": str(diagnostics.get("mistral_import_error") or ""),
         "mistral_client_mode": str(diagnostics.get("mistral_client_mode") or ""),
@@ -222,6 +229,7 @@ def chat(
 def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) -> ChatResponse:
     previous_provider_order = os.environ.get("AGENT_PROVIDER_ORDER")
     model_env_keys = {
+        "nvidia": "NVIDIA_MODEL",
         "cerebras": "CEREBRAS_MODEL",
         "mistral": "MISTRAL_MODEL",
         "openrouter": "OPENROUTER_MODEL",
@@ -384,9 +392,17 @@ def provider_probe(
 ) -> Dict[str, Any]:
     require_auth(x_app_password, x_user_id)
     provider = provider.strip().lower()
+    previous_nvidia_model = os.environ.get("NVIDIA_MODEL")
     previous_fireworks_model = os.environ.get("FIREWORKS_MODEL")
     previous_mistral_model = os.environ.get("MISTRAL_MODEL")
     try:
+        if provider == "nvidia":
+            selected_model = (model or os.environ.get("NVIDIA_MODEL") or NVIDIA_MODEL).strip()
+            if selected_model:
+                os.environ["NVIDIA_MODEL"] = selected_model
+            reply = call_nvidia("請只回覆 OK。", max_tokens=64, temperature=0.0)
+            return {"ok": True, "provider": "nvidia", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
+
         if provider == "fireworks":
             selected_model = model
             if selected_model == "auto":
@@ -405,17 +421,22 @@ def provider_probe(
             reply = call_mistral("請只回覆 OK。", max_tokens=64, temperature=0.0)
             return {"ok": True, "provider": "mistral", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
 
-        raise HTTPException(status_code=400, detail="Only fireworks and mistral probes are implemented.")
+        raise HTTPException(status_code=400, detail="Only nvidia, fireworks and mistral probes are implemented.")
     except HTTPException:
         raise
     except Exception as exc:
         active_model = (
             model
+            or (os.environ.get("NVIDIA_MODEL") if provider == "nvidia" else None)
             or (os.environ.get("FIREWORKS_MODEL") if provider == "fireworks" else None)
             or (os.environ.get("MISTRAL_MODEL") if provider == "mistral" else None)
         )
         return {"ok": False, "provider": provider, "model": active_model, "error": f"{type(exc).__name__}: {exc}"}
     finally:
+        if previous_nvidia_model is None:
+            os.environ.pop("NVIDIA_MODEL", None)
+        else:
+            os.environ["NVIDIA_MODEL"] = previous_nvidia_model
         if previous_fireworks_model is None:
             os.environ.pop("FIREWORKS_MODEL", None)
         else:
@@ -434,10 +455,13 @@ def provider_models(
     require_auth(x_app_password, x_user_id)
     provider = provider.strip().lower()
     try:
-        if provider != "fireworks":
-            raise HTTPException(status_code=400, detail="Only fireworks model listing is implemented.")
-        models = list_fireworks_serverless_models()
-        return {"ok": True, "provider": "fireworks", "models": models}
+        if provider == "fireworks":
+            models = list_fireworks_serverless_models()
+            return {"ok": True, "provider": "fireworks", "models": models}
+        if provider == "nvidia":
+            models = list_nvidia_free_models()
+            return {"ok": True, "provider": "nvidia", "models": models}
+        raise HTTPException(status_code=400, detail="Only fireworks and nvidia model listing is implemented.")
     except HTTPException:
         raise
     except Exception as exc:

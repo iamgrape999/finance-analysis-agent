@@ -11,6 +11,7 @@ const toggleLogButton = document.getElementById("toggleLogButton");
 const closeLogButton = document.getElementById("closeLogButton");
 const advancedSettings = document.getElementById("advancedSettings");
 const modelInputs = {
+  nvidia: document.getElementById("nvidiaModelInput"),
   cerebras: document.getElementById("cerebrasModelInput"),
   mistral: document.getElementById("mistralModelInput"),
   openrouter: document.getElementById("openrouterModelInput"),
@@ -64,19 +65,19 @@ const responsePresets = {
     label: "快速短答",
     maxTokens: 768,
     historyTurns: 2,
-    providerOrder: "cerebras,mistral,openrouter,groq,cloudflare,aws,fireworks,gemini"
+    providerOrder: "nvidia,cerebras,mistral,openrouter,groq,cloudflare,aws,fireworks,gemini"
   },
   stable: {
     label: "穩定聊天",
     maxTokens: 2048,
     historyTurns: 4,
-    providerOrder: "cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini"
+    providerOrder: "nvidia,cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini"
   },
   deep: {
     label: "深度分析",
     maxTokens: 4096,
     historyTurns: 6,
-    providerOrder: "cerebras,mistral,openrouter,aws,cloudflare,groq,fireworks,gemini"
+    providerOrder: "nvidia,cerebras,mistral,openrouter,aws,cloudflare,groq,fireworks,gemini"
   }
 };
 const mistralModeDefaults = {
@@ -177,12 +178,12 @@ function currentResponsePreset() {
 
 function mobileProviderOrderFor(modeKey) {
   if (modeKey === "deep") {
-    return "cerebras,mistral,openrouter,aws,fireworks,cloudflare,groq,gemini";
+    return "nvidia,cerebras,mistral,openrouter,aws,fireworks,cloudflare,groq,gemini";
   }
   if (modeKey === "stable") {
-    return "cerebras,mistral,openrouter,fireworks,aws,gemini";
+    return "nvidia,cerebras,mistral,openrouter,fireworks,aws,gemini";
   }
-  return "cerebras,mistral,openrouter,fireworks,gemini";
+  return "nvidia,cerebras,mistral,openrouter,fireworks,gemini";
 }
 
 function chatRequestTimeoutMsForMode(modeKey) {
@@ -356,6 +357,12 @@ async function checkHealth() {
     modelDefaults = data.model_defaults || {};
     if (data.backend_version) {
       log(`backend version=${data.backend_version}`, "TRACE");
+    }
+    const diagnostics = data.provider_diagnostics || {};
+    if (diagnostics.nvidia_key_present === false) {
+      log("nvidia health: NVIDIA_API_KEY is missing; NVIDIA will be skipped", "WARN");
+    } else if (diagnostics.nvidia_model) {
+      log(`nvidia health: model=${diagnostics.nvidia_model}; base_url=${diagnostics.nvidia_base_url || "default"}`, "TRACE");
     }
     if (!data.password_required) {
       log("backend reports password_required=false; set APP_PASSWORD on Render to enforce login", "WARN");
