@@ -239,10 +239,67 @@ function formatUsage(usage) {
   return parts.join(" / ");
 }
 
+function summarizeWebSearchDecision(webSearch) {
+  const decision = webSearch?.decision;
+  if (!decision || typeof decision !== "object") return "";
+  const reason = decision.reason || "";
+  const priority = decision.priority ? `priority=${decision.priority}` : "";
+  const confidence = typeof decision.confidence === "number" ? `confidence=${decision.confidence}` : "";
+  return [reason, priority, confidence].filter(Boolean).join(" | ");
+}
+
+function buildWebSourcesElement(webSearch) {
+  if (!webSearch || typeof webSearch !== "object") return null;
+  const results = Array.isArray(webSearch.results) ? webSearch.results : [];
+  const reasonText = summarizeWebSearchDecision(webSearch);
+  if (!reasonText && !results.length) return null;
+
+  const wrap = document.createElement("section");
+  wrap.className = "message-sources";
+
+  if (reasonText) {
+    const reasonEl = document.createElement("div");
+    reasonEl.className = "message-sources-reason";
+    reasonEl.textContent = `web search: ${reasonText}`;
+    wrap.appendChild(reasonEl);
+  }
+
+  if (results.length) {
+    const titleEl = document.createElement("div");
+    titleEl.className = "message-sources-title";
+    titleEl.textContent = "來源";
+    wrap.appendChild(titleEl);
+
+    const list = document.createElement("ul");
+    list.className = "message-sources-list";
+    for (const item of results.slice(0, 5)) {
+      const li = document.createElement("li");
+      const link = document.createElement("a");
+      const url = String(item?.url || "").trim();
+      const title = String(item?.title || url || "未命名來源").trim();
+      link.textContent = title;
+      if (url) {
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      } else {
+        link.href = "#";
+        link.addEventListener("click", (event) => event.preventDefault());
+      }
+      li.appendChild(link);
+      list.appendChild(li);
+    }
+    wrap.appendChild(list);
+  }
+
+  return wrap;
+}
+
 function addMessage(role, text, meta = {}) {
   const el = document.createElement("article");
   el.className = `message ${role}`;
   const body = document.createElement("div");
+  body.className = "message-body";
   body.textContent = text;
   el.appendChild(body);
 
@@ -259,6 +316,13 @@ function addMessage(role, text, meta = {}) {
     metaEl.className = "message-meta";
     metaEl.textContent = metaParts.join(" | ");
     el.appendChild(metaEl);
+  }
+
+  if (role !== "user") {
+    const sourcesEl = buildWebSourcesElement(meta.web_search);
+    if (sourcesEl) {
+      el.appendChild(sourcesEl);
+    }
   }
 
   messages.appendChild(el);
@@ -283,6 +347,26 @@ function logProviderTrace(providerTrace) {
     if (item.remaining_budget_sec !== undefined) parts.push(`budget_left=${item.remaining_budget_sec}s`);
     if (item.reason) parts.push(`reason=${item.reason}`);
     log(parts.join(" | "), item.status === "ok" ? "TRACE" : "WARN");
+  }
+}
+
+function logWebSearch(webSearch) {
+  if (!webSearch || typeof webSearch !== "object") return;
+  const reasonText = summarizeWebSearchDecision(webSearch);
+  if (reasonText) {
+    log(`web search decision: ${reasonText}`, "TRACE");
+  }
+  if (webSearch.error) {
+    log(`web search error: ${webSearch.error}`, "WARN");
+  }
+  if (webSearch.used) {
+    const titles = (Array.isArray(webSearch.results) ? webSearch.results : [])
+      .slice(0, 5)
+      .map((item) => String(item?.title || item?.url || "").trim())
+      .filter(Boolean);
+    if (titles.length) {
+      log(`web search sources: ${titles.join(" | ")}`, "TRACE");
+    }
   }
 }
 
@@ -723,12 +807,14 @@ async function sendMessage(message, endpoint = "/api/chat") {
       latency_s: data.latency_s,
       provider_attempts: data.provider_attempts,
       failover_errors: data.failover_errors,
-      continue_rounds: data.continue_rounds
+      continue_rounds: data.continue_rounds,
+      web_search: data.web_search
     });
     if (data.failover_errors?.length) {
       log(`failover: ${data.failover_errors.map((item) => `${item.provider} -> ${item.error}`).join(" ; ")}`, "WARN");
     }
     logProviderTrace(data.provider_trace);
+    logWebSearch(data.web_search);
     if (data.context_sizes) {
       log(
         `context sizes: heavy=${data.context_sizes.heavy_prompt_tokens || "?"}t/${data.context_sizes.heavy_prompt_chars || "?"}c | ` +
