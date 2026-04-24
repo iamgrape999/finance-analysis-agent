@@ -7,6 +7,7 @@ const responseModeInput = document.getElementById("responseModeInput");
 const apiBaseInput = document.getElementById("apiBaseInput");
 const webSearchProviderButtons = document.getElementById("webSearchProviderButtons");
 const forceWebSearchInput = document.getElementById("forceWebSearchInput");
+const toggleThemeButton = document.getElementById("toggleThemeButton");
 const toggleSidebarButton = document.getElementById("toggleSidebarButton");
 const toggleSettingsButton = document.getElementById("toggleSettingsButton");
 const toggleLogButton = document.getElementById("toggleLogButton");
@@ -63,6 +64,7 @@ const passwordKey = "finance_agent_app_password";
 const responseModeKey = "finance_agent_response_mode";
 const webSearchProviderKey = "finance_agent_web_search_provider";
 const forceWebSearchKey = "finance_agent_force_web_search";
+const themeModeKey = "finance_agent_theme_mode";
 const CHAT_REQUEST_TIMEOUT_MS = 90000;
 const FRONTEND_BUILD = "2026-04-21-route-budget-v2";
 const responsePresets = {
@@ -103,6 +105,7 @@ let appPassword = localStorage.getItem(passwordKey) || "";
 responseModeInput.value = localStorage.getItem(responseModeKey) || "fast";
 let webSearchProviderMode = localStorage.getItem(webSearchProviderKey) || "auto";
 forceWebSearchInput.checked = localStorage.getItem(forceWebSearchKey) === "true";
+let themeMode = localStorage.getItem(themeModeKey) || "";
 let lastMobileLayoutState = isMobileLayout();
 
 function makeThreadId() {
@@ -116,6 +119,32 @@ function sanitizeUserId(value) {
 
 function threadStorageKey() {
   return `${threadKey}_${userId || "default"}`;
+}
+
+function preferredThemeMode() {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function effectiveThemeMode() {
+  return themeMode || preferredThemeMode();
+}
+
+function applyTheme() {
+  const mode = effectiveThemeMode();
+  document.body.dataset.theme = mode;
+  if (toggleThemeButton) {
+    toggleThemeButton.textContent = mode === "dark" ? "日間" : "夜間";
+    toggleThemeButton.setAttribute("aria-label", mode === "dark" ? "切換到日間模式" : "切換到夜間模式");
+    toggleThemeButton.title = mode === "dark" ? "切換到日間模式" : "切換到夜間模式";
+  }
+}
+
+function toggleThemeMode() {
+  const current = effectiveThemeMode();
+  themeMode = current === "dark" ? "light" : "dark";
+  localStorage.setItem(themeModeKey, themeMode);
+  applyTheme();
+  log(`theme mode=${themeMode}`, "DEBUG");
 }
 
 function log(message, level = "INFO") {
@@ -962,6 +991,12 @@ responseModeInput.addEventListener("change", () => {
   applyResponsePreset(true);
 });
 
+if (toggleThemeButton) {
+  toggleThemeButton.addEventListener("click", () => {
+    toggleThemeMode();
+  });
+}
+
 if (webSearchProviderButtons) {
   webSearchProviderButtons.addEventListener("click", (event) => {
     const buttonEl = event.target.closest("[data-search-provider]");
@@ -1084,6 +1119,7 @@ passwordUserInput.addEventListener("keydown", (event) => {
 
 log("UI initialized", "STEP");
 log(`frontend build=${FRONTEND_BUILD}`, "TRACE");
+applyTheme();
 updateWebSearchProviderButtons();
 setUnlocked(false);
 applyResponsePreset(false);
@@ -1095,6 +1131,11 @@ window.addEventListener("resize", () => {
     mainWorkspace.classList.add("sidebar-collapsed");
     mainWorkspace.classList.remove("settings-open");
     logPanel.classList.remove("is-open");
+  }
+});
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (!themeMode) {
+    applyTheme();
   }
 });
 checkHealth();
