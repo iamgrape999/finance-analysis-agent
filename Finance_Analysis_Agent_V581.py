@@ -49,6 +49,9 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a
 
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "").strip()
 CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b").strip()
+CEREBRAS_MODEL_ALIASES = {
+    "qwen/qwen3-235b-a22b": "qwen-3-235b-a22b-instruct-2507",
+}
 
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "").strip()
 NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-4-maverick-17b-128e-instruct").strip()
@@ -113,7 +116,7 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
 AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1")).strip()
 AWS_BEDROCK_MODEL = os.getenv("AWS_BEDROCK_MODEL", "anthropic.claude-3-haiku-20240307-v1:0").strip()
 
-AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "nvidia,cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini")
+AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia")
 AGENT_PROVIDER_DISABLE = os.getenv("AGENT_PROVIDER_DISABLE", "").lower()
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 REQUEST_TIMEOUT_SEC = int(os.getenv("REQUEST_TIMEOUT_SEC", "120"))
@@ -693,11 +696,17 @@ def provider_readiness() -> Dict[str, bool]:
 
 def provider_diagnostics() -> Dict[str, Any]:
     raw_nvidia_model = os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL
+    raw_cerebras_model = os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL).strip() or CEREBRAS_MODEL
     diag: Dict[str, Any] = {
         "nvidia_key_present": bool(NVIDIA_API_KEY),
         "nvidia_model": raw_nvidia_model,
+        "nvidia_raw_model": raw_nvidia_model,
         "nvidia_effective_model": _resolve_nvidia_model(raw_nvidia_model),
         "nvidia_base_url": os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL,
+        "cerebras_key_present": bool(CEREBRAS_API_KEY),
+        "cerebras_model": raw_cerebras_model,
+        "cerebras_raw_model": raw_cerebras_model,
+        "cerebras_effective_model": CEREBRAS_MODEL_ALIASES.get(raw_cerebras_model, raw_cerebras_model),
         "mistral_import_ok": True,
         "mistral_import_error": "",
         "mistral_client_mode": "http",
@@ -1060,7 +1069,8 @@ def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_overri
 
 def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
     del timeout_override
-    model = os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL).strip() or CEREBRAS_MODEL
+    requested_model = os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL).strip() or CEREBRAS_MODEL
+    model = CEREBRAS_MODEL_ALIASES.get(requested_model, requested_model)
     try:
         from cerebras.cloud.sdk import Cerebras  # type: ignore
     except Exception as exc:
@@ -1101,7 +1111,10 @@ def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_over
                 value = getattr(usage_obj, attr, None)
                 if value is not None:
                     usage[attr] = value
-    return ModelReply(text=str(text).strip(), meta={"provider": "cerebras", "model": model, "usage": usage})
+    return ModelReply(
+        text=str(text).strip(),
+        meta={"provider": "cerebras", "model": model, "requested_model": requested_model, "usage": usage},
+    )
 
 
 def call_mistral(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:

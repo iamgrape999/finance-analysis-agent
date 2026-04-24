@@ -75,21 +75,20 @@
                 Provider Order
                 <select id="providerOrderInput">
                   <option value="">Auto</option>
-                  <option value="nvidia,cerebras,mistral,openrouter,groq,cloudflare,aws,fireworks,gemini">Fast: NVIDIA first, Gemini last</option>
-                  <option value="nvidia,cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini">Stable: NVIDIA first, Gemini last</option>
-                  <option value="nvidia,cerebras,mistral,openrouter,aws,cloudflare,groq,fireworks,gemini">Deep: NVIDIA first, Gemini last</option>
-                  <option value="nvidia,cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini">NVIDIA first, Gemini last</option>
-                  <option value="cerebras,nvidia,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini">Cerebras first, NVIDIA second, Gemini last</option>
-                  <option value="mistral,nvidia,cerebras,openrouter,cloudflare,groq,aws,fireworks,gemini">Mistral first, NVIDIA second, Gemini last</option>
-                  <option value="openrouter,nvidia,cloudflare,groq,aws,fireworks,gemini">OpenRouter first, NVIDIA second, Gemini last</option>
-                  <option value="cloudflare,nvidia,openrouter,groq,aws,fireworks,gemini">Cloudflare first, NVIDIA second, Gemini last</option>
-                  <option value="groq,nvidia,openrouter,cloudflare,aws,fireworks,gemini">Groq first, NVIDIA second, Gemini last</option>
-                  <option value="fireworks,nvidia,openrouter,cloudflare,groq,aws,gemini">Fireworks first (uses credit, NVIDIA second, Gemini last)</option>
+                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Fast: Cerebras first, NVIDIA last</option>
+                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Stable: Cerebras first, NVIDIA last</option>
+                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Deep: Cerebras first, NVIDIA last</option>
+                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Recommended: Cerebras/Groq/Mistral first</option>
+                  <option value="mistral,groq,cerebras,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Mistral first, NVIDIA last</option>
+                  <option value="openrouter,gemini,mistral,cerebras,cloudflare,groq,fireworks,aws,nvidia">OpenRouter first, NVIDIA last</option>
+                  <option value="cloudflare,groq,mistral,gemini,openrouter,fireworks,aws,nvidia">Cloudflare first, NVIDIA last</option>
+                  <option value="groq,cerebras,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Groq first, NVIDIA last</option>
+                  <option value="fireworks,openrouter,mistral,gemini,cerebras,cloudflare,groq,aws,nvidia">Fireworks first (uses credit, NVIDIA last)</option>
                   <option value="nvidia">nvidia only (no fallback)</option>
                   <option value="mistral">mistral only (no fallback)</option>
                   <option value="cerebras">cerebras only (no fallback)</option>
                   <option value="openrouter">openrouter only (no fallback)</option>
-                  <option value="gemini,nvidia,openrouter,cloudflare,groq,aws,fireworks">Gemini first</option>
+                  <option value="gemini,mistral,cerebras,openrouter,cloudflare,groq,fireworks,aws,nvidia">Gemini first</option>
                 </select>
               </label>
 
@@ -99,7 +98,6 @@
                   <option value="">Use .env default</option>
                   <optgroup label="NVIDIA Free Endpoint Production Models">
                     <option value="meta/llama-4-maverick-17b-128e-instruct">meta/llama-4-maverick-17b-128e-instruct</option>
-                    <option value="openai/gpt-oss-120b">openai/gpt-oss-120b</option>
                   </optgroup>
                   <optgroup label="NVIDIA Free Endpoint Preview Models">
                     <option value="nvidia/nemotron-3-super-120b-a12b">nvidia/nemotron-3-super-120b-a12b</option>
@@ -128,7 +126,6 @@
                   <option value="">Use .env default</option>
                   <optgroup label="Cerebras Production Models">
                     <option value="llama3.1-8b">llama3.1-8b</option>
-                    <option value="gpt-oss-120b">gpt-oss-120b</option>
                   </optgroup>
                   <optgroup label="Cerebras Preview Models">
                     <option value="qwen-3-235b-a22b-instruct-2507">qwen-3-235b-a22b-instruct-2507 (deprecated May 27, 2026)</option>

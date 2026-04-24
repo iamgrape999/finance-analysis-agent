@@ -65,19 +65,19 @@ const responsePresets = {
     label: "快速短答",
     maxTokens: 768,
     historyTurns: 2,
-    providerOrder: "nvidia,cerebras,mistral,openrouter,groq,cloudflare,aws,fireworks,gemini"
+    providerOrder: "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia"
   },
   stable: {
     label: "穩定聊天",
     maxTokens: 2048,
     historyTurns: 4,
-    providerOrder: "nvidia,cerebras,mistral,openrouter,cloudflare,groq,aws,fireworks,gemini"
+    providerOrder: "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia"
   },
   deep: {
     label: "深度分析",
     maxTokens: 4096,
     historyTurns: 6,
-    providerOrder: "nvidia,cerebras,mistral,openrouter,aws,cloudflare,groq,fireworks,gemini"
+    providerOrder: "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia"
   }
 };
 const mistralModeDefaults = {
@@ -178,12 +178,12 @@ function currentResponsePreset() {
 
 function mobileProviderOrderFor(modeKey) {
   if (modeKey === "deep") {
-    return "nvidia,cerebras,mistral,openrouter,aws,fireworks,cloudflare,groq,gemini";
+    return "cerebras,mistral,gemini,openrouter,fireworks,groq,cloudflare,aws,nvidia";
   }
   if (modeKey === "stable") {
-    return "nvidia,cerebras,mistral,openrouter,fireworks,aws,gemini";
+    return "cerebras,groq,mistral,gemini,openrouter,fireworks,cloudflare,aws,nvidia";
   }
-  return "nvidia,cerebras,mistral,openrouter,fireworks,gemini";
+  return "cerebras,groq,mistral,gemini,openrouter,fireworks,aws,nvidia";
 }
 
 function chatRequestTimeoutMsForMode(modeKey) {
@@ -315,6 +315,14 @@ function collectModelOverrides() {
   return out;
 }
 
+function formatErrorDetails(err) {
+  const lines = [];
+  if (err?.name) lines.push(`name=${err.name}`);
+  if (err?.message) lines.push(`message=${err.message}`);
+  if (err?.stack) lines.push(`stack=${err.stack}`);
+  return lines.join(" | ");
+}
+
 function effectiveProviderOrderForRequest() {
   const explicitOrder = (providerOrderInput.value || "").trim();
   if (explicitOrder) {
@@ -362,7 +370,18 @@ async function checkHealth() {
     if (diagnostics.nvidia_key_present === false) {
       log("nvidia health: NVIDIA_API_KEY is missing; NVIDIA will be skipped", "WARN");
     } else if (diagnostics.nvidia_model) {
-      log(`nvidia health: model=${diagnostics.nvidia_model}; base_url=${diagnostics.nvidia_base_url || "default"}`, "TRACE");
+      const nvidiaDiff = diagnostics.nvidia_raw_model && diagnostics.nvidia_effective_model && diagnostics.nvidia_raw_model !== diagnostics.nvidia_effective_model
+        ? `; effective=${diagnostics.nvidia_effective_model}`
+        : "";
+      log(`nvidia health: model=${diagnostics.nvidia_model}; base_url=${diagnostics.nvidia_base_url || "default"}${nvidiaDiff}`, "TRACE");
+    }
+    if (diagnostics.cerebras_key_present === false) {
+      log("cerebras health: CEREBRAS_API_KEY is missing; Cerebras will be skipped", "WARN");
+    } else if (diagnostics.cerebras_model) {
+      const cerebrasDiff = diagnostics.cerebras_raw_model && diagnostics.cerebras_effective_model && diagnostics.cerebras_raw_model !== diagnostics.cerebras_effective_model
+        ? `; effective=${diagnostics.cerebras_effective_model}`
+        : "";
+      log(`cerebras health: model=${diagnostics.cerebras_model}${cerebrasDiff}`, "TRACE");
     }
     if (!data.password_required) {
       log("backend reports password_required=false; set APP_PASSWORD on Render to enforce login", "WARN");
@@ -727,6 +746,10 @@ async function sendMessage(message, endpoint = "/api/chat") {
       : friendlyNetworkError(err);
     addMessage("assistant", `發生錯誤：${rawMessage}`);
     log(`chat failed: ${err?.name || "Error"} ${err?.message || String(err)}; thread=${threadId}; provider_order=${effectiveProviderOrder || "backend"}`, "FAIL");
+    if (err?.name === "SyntaxError" || /expected pattern/i.test(err?.message || "")) {
+      log(`syntax error details: ${formatErrorDetails(err)}`, "TRACE");
+      log(`syntax error context: api_base=${apiBaseInput.value || "(same origin)"}; provider_order=${effectiveProviderOrder || "backend"}; user=${userId}; thread=${threadId}`, "TRACE");
+    }
   } finally {
     if (timeoutId !== null) {
       window.clearTimeout(timeoutId);
