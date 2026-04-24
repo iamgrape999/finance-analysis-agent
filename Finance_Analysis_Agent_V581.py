@@ -991,7 +991,8 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_ov
 
 
 def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = _resolve_nvidia_model()
+    requested_model = (os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL)
+    model = _resolve_nvidia_model(requested_model)
     url = os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL
     headers = {
         "Authorization": f"Bearer {NVIDIA_API_KEY}",
