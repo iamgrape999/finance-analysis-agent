@@ -92,6 +92,7 @@ class ChatResponse(BaseModel):
     failover_errors: List[Dict[str, str]] = Field(default_factory=list)
     provider_trace: List[Dict[str, Any]] = Field(default_factory=list)
     context_sizes: Dict[str, Any] = Field(default_factory=dict)
+    web_search: Dict[str, Any] = Field(default_factory=dict)
     continue_rounds: int = 0
     route_timeout_sec: Optional[int] = None
 
@@ -204,6 +205,9 @@ def healthz() -> Dict[str, Any]:
         "ok": True,
         "app": APP_NAME,
         "backend_version": APP_BUILD_ID,
+        "web_search_enabled": bool(diagnostics.get("web_search_enabled")),
+        "tavily_key_present": bool(diagnostics.get("tavily_key_present")),
+        "web_search_max_results": int(diagnostics.get("web_search_max_results") or 0),
         "nvidia_key_present": bool(diagnostics.get("nvidia_key_present")),
         "nvidia_model": str(diagnostics.get("nvidia_model") or ""),
         "nvidia_raw_model": str(diagnostics.get("nvidia_raw_model") or ""),
@@ -310,6 +314,7 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
         failover_errors=meta.get("failover_errors") or [],
         provider_trace=meta.get("provider_trace") or [],
         context_sizes=meta.get("context_sizes") or {},
+        web_search=meta.get("web_search") or {},
         continue_rounds=int(meta.get("continue_rounds") or 0),
         route_timeout_sec=int(meta.get("route_timeout_sec")) if meta.get("route_timeout_sec") is not None else None,
     )

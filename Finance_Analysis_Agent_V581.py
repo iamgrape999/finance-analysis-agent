@@ -147,6 +147,22 @@ LIGHT_SUMMARY_CHARS = int(os.getenv("LIGHT_SUMMARY_CHARS", "480"))
 LIGHT_GLOBAL_MEMORY_CHARS = int(os.getenv("LIGHT_GLOBAL_MEMORY_CHARS", "320"))
 LIGHT_USER_MESSAGE_CHARS = int(os.getenv("LIGHT_USER_MESSAGE_CHARS", "1600"))
 LIGHT_HISTORY_TURNS = int(os.getenv("LIGHT_HISTORY_TURNS", "0"))
+WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() == "true"
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "3"))
+WEB_SEARCH_TIMEOUT_SEC = int(os.getenv("WEB_SEARCH_TIMEOUT_SEC", "8"))
+WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("WEB_SEARCH_MAX_CONTEXT_CHARS", "2400"))
+LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS", "900"))
+WEB_SEARCH_SEARCH_DEPTH = os.getenv("WEB_SEARCH_SEARCH_DEPTH", "basic").strip() or "basic"
+WEB_SEARCH_TOPIC = os.getenv("WEB_SEARCH_TOPIC", "general").strip() or "general"
+WEB_SEARCH_TRIGGER_KEYWORDS = [
+    kw.strip()
+    for kw in os.getenv(
+        "WEB_SEARCH_TRIGGER_KEYWORDS",
+        "最新,現在,今天,目前,最近,明天,價格,股價,匯率,新聞,發布,上架,下架,模型,可用,還在嗎,有沒有,搜尋,查一下,查詢",
+    ).split(",")
+    if kw.strip()
+]
 AUTO_CONTINUE_ENABLED = os.getenv("AUTO_CONTINUE_ENABLED", "true").lower() == "true"
 AUTO_CONTINUE_MAX_ROUNDS = int(os.getenv("AUTO_CONTINUE_MAX_ROUNDS", "2"))
 AUTO_CONTINUE_TAIL_CHARS = int(os.getenv("AUTO_CONTINUE_TAIL_CHARS", "1200"))
@@ -290,13 +306,14 @@ def _clip_text(text: str, max_chars: int, label: str = "") -> str:
 
 
 def _extract_prompt_sections(prompt: str) -> Dict[str, str]:
-    sections = {"global": "", "summary": "", "history": "", "user": "", "preamble": ""}
+    sections = {"global": "", "summary": "", "history": "", "web": "", "user": "", "preamble": ""}
     current = "preamble"
     buffer: List[str] = []
     markers = {
         "[全域記憶]": "global",
         "[對話摘要]": "summary",
         "[最近對話]": "history",
+        "[即時網路搜尋結果]": "web",
         "[本輪使用者問題]": "user",
     }
 
@@ -333,6 +350,8 @@ def _compact_prompt_for_provider(prompt: str, provider: str) -> Tuple[str, Dict[
     candidate_parts: List[str] = []
     if sections.get("user"):
         candidate_parts.append("[本輪使用者問題]\n" + sections["user"])
+    if sections.get("web"):
+        candidate_parts.insert(0, "[即時網路搜尋結果]\n" + sections["web"])
     if sections.get("summary"):
         candidate_parts.insert(0, "[對話摘要]\n" + sections["summary"])
     if sections.get("global"):
@@ -343,13 +362,13 @@ def _compact_prompt_for_provider(prompt: str, provider: str) -> Tuple[str, Dict[
     # Groq / Cloudflare 優先走「無歷史」版本，真的還太長才再縮 user。
     if token_est(compact) > LIGHT_PROVIDER_MAX_PROMPT_TOKENS:
         user_text = sections.get("user") or prompt
+        web_text = sections.get("web") or ""
         max_user_chars = max(1000, int(LIGHT_PROVIDER_MAX_PROMPT_TOKENS / max(TOKEN_EST_RATIO, 0.1)) - 400)
-        compact = (
-            header
-            + "\n\n"
-            + "[本輪使用者問題]\n"
-            + _clip_text(user_text, max_user_chars, f"{provider} 轻量輸入")
-        )
+        compact_parts = [header]
+        if web_text:
+            compact_parts.append("[即時網路搜尋結果]\n" + _clip_text(web_text, min(600, max_user_chars // 2), f"{provider} 搜尋結果"))
+        compact_parts.append("[本輪使用者問題]\n" + _clip_text(user_text, max_user_chars, f"{provider} 轻量輸入"))
+        compact = "\n\n".join(compact_parts)
         return compact, {
             "mode": "user_only",
             "prompt_tokens": token_est(compact),
@@ -361,6 +380,77 @@ def _compact_prompt_for_provider(prompt: str, provider: str) -> Tuple[str, Dict[
         "prompt_tokens": token_est(compact),
         "light_budget": LIGHT_PROVIDER_MAX_PROMPT_TOKENS,
     }
+
+
+def needs_web_search(query: str) -> bool:
+    if not WEB_SEARCH_ENABLED or not TAVILY_API_KEY:
+        return False
+    text = strip_redundant(query or "")
+    if not text:
+        return False
+    lowered = text.lower()
+    explicit_patterns = [r"查(一下|詢|查)", r"搜尋", r"\bsearch\b", r"\blook up\b"]
+    if any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in explicit_patterns):
+        return True
+    return any(keyword.lower() in lowered for keyword in WEB_SEARCH_TRIGGER_KEYWORDS)
+
+
+def search_web(query: str) -> Dict[str, Any]:
+    if not TAVILY_API_KEY:
+        raise RuntimeError("TAVILY_API_KEY is not configured")
+    payload = {
+        "api_key": TAVILY_API_KEY,
+        "query": strip_redundant(query or ""),
+        "topic": WEB_SEARCH_TOPIC,
+        "search_depth": WEB_SEARCH_SEARCH_DEPTH,
+        "max_results": int(WEB_SEARCH_MAX_RESULTS),
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    response = requests.post(
+        "https://api.tavily.com/search",
+        json=payload,
+        timeout=(5, int(WEB_SEARCH_TIMEOUT_SEC)),
+    )
+    if response.status_code >= 400:
+        body = (response.text or "")[:800].replace("\n", "\\n").replace("\r", "\\r")
+        raise RuntimeError(f"Tavily error {response.status_code}: {body}")
+    data = response.json() or {}
+    normalized_results: List[Dict[str, Any]] = []
+    for item in (data.get("results") or [])[: int(WEB_SEARCH_MAX_RESULTS)]:
+        normalized_results.append(
+            {
+                "title": str(item.get("title") or "").strip(),
+                "url": str(item.get("url") or "").strip(),
+                "content": strip_redundant(str(item.get("content") or "")),
+                "score": item.get("score"),
+            }
+        )
+    return {
+        "query": payload["query"],
+        "results": normalized_results,
+        "response_time": data.get("response_time"),
+    }
+
+
+def _format_web_search_context(search_meta: Dict[str, Any], max_chars: int) -> str:
+    results = list(search_meta.get("results") or [])
+    if not results:
+        return ""
+    lines = [
+        "[即時網路搜尋結果]",
+        "以下資訊來自即時網路搜尋；若與既有知識衝突，請優先採用較新的來源，並在回答中提到來源。",
+    ]
+    for idx, item in enumerate(results, start=1):
+        title = str(item.get("title") or f"結果 {idx}")
+        url = str(item.get("url") or "")
+        content = _clip_text(str(item.get("content") or ""), 700, f"搜尋結果 {idx}")
+        lines.append(f"{idx}. {title}")
+        if url:
+            lines.append(f"來源：{url}")
+        if content:
+            lines.append(f"摘要：{content}")
+    return _clip_text("\n".join(lines), max_chars, "即時網路搜尋結果")
 
 
 SYSTEM_POLICY_LIGHT = (
@@ -707,6 +797,9 @@ def provider_diagnostics() -> Dict[str, Any]:
     raw_nvidia_model = os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL
     raw_cerebras_model = os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL).strip() or CEREBRAS_MODEL
     diag: Dict[str, Any] = {
+        "web_search_enabled": bool(WEB_SEARCH_ENABLED),
+        "tavily_key_present": bool(TAVILY_API_KEY),
+        "web_search_max_results": int(WEB_SEARCH_MAX_RESULTS),
         "nvidia_key_present": bool(NVIDIA_API_KEY),
         "nvidia_model": raw_nvidia_model,
         "nvidia_raw_model": raw_nvidia_model,
@@ -1726,6 +1819,7 @@ def _build_context_variant(
     use_history: bool,
     use_summary: bool,
     user_id: Optional[str] = None,
+    external_context: Optional[str] = None,
     include_global: bool = True,
     include_summary: bool = True,
     include_history: bool = True,
@@ -1734,6 +1828,7 @@ def _build_context_variant(
     max_global_memory_chars: Optional[int] = None,
     max_history_turn_chars: Optional[int] = None,
     max_user_message_chars: Optional[int] = None,
+    max_external_context_chars: Optional[int] = None,
 ) -> str:
     blocks: List[Tuple[str, str]] = []
     prompt_budget = int(max_prompt_tokens or MAX_PROMPT_TOKENS)
@@ -1741,6 +1836,7 @@ def _build_context_variant(
     global_budget = int(max_global_memory_chars or MAX_GLOBAL_MEMORY_CHARS)
     history_turn_budget = int(max_history_turn_chars or MAX_HISTORY_TURN_CHARS)
     user_budget = int(max_user_message_chars or MAX_USER_MESSAGE_CHARS)
+    external_budget = int(max_external_context_chars or WEB_SEARCH_MAX_CONTEXT_CHARS)
 
     global_facts = load_global_facts(user_id) if include_global else {}
     if global_facts:
@@ -1770,6 +1866,9 @@ def _build_context_variant(
                     lines.append(f"{role}: {content}")
             if lines:
                 blocks.append(("history", "[最近對話]\n" + "\n".join(lines)))
+
+    if external_context:
+        blocks.append(("web", _clip_text(external_context, external_budget, "即時網路搜尋結果")))
 
     user_text = _clip_text(user_text, user_budget, "本輪使用者訊息")
     blocks.append(("user", "[本輪使用者問題]\n" + user_text))
@@ -1809,6 +1908,7 @@ def _build_light_context(
     user_text: str,
     use_summary: bool,
     user_id: Optional[str] = None,
+    external_context: Optional[str] = None,
 ) -> str:
     return _build_context_variant(
         adapter,
@@ -1817,6 +1917,7 @@ def _build_light_context(
         use_history=False,
         use_summary=use_summary,
         user_id=user_id,
+        external_context=external_context,
         include_global=True,
         include_summary=True,
         include_history=False,
@@ -1824,6 +1925,7 @@ def _build_light_context(
         max_summary_chars=LIGHT_SUMMARY_CHARS,
         max_global_memory_chars=LIGHT_GLOBAL_MEMORY_CHARS,
         max_user_message_chars=LIGHT_USER_MESSAGE_CHARS,
+        max_external_context_chars=LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS,
     )
 
 
@@ -1862,6 +1964,25 @@ def chat_once_detailed(
         return {"reply": "請輸入問題。", "meta": {"provider": "local"}}
 
     adapter = MemoryAdapter(memory=memory, THREAD_ID=THREAD_ID or "WEB_DEFAULT", USER_ID=user_id)
+    web_search_meta: Dict[str, Any] = {
+        "enabled": bool(WEB_SEARCH_ENABLED and TAVILY_API_KEY),
+        "used": False,
+        "query": "",
+        "results": [],
+        "error": "",
+    }
+    external_context = ""
+    if needs_web_search(user_text):
+        web_search_meta["query"] = user_text
+        try:
+            raw_search = search_web(user_text)
+            web_search_meta["used"] = bool(raw_search.get("results"))
+            web_search_meta["results"] = raw_search.get("results") or []
+            web_search_meta["response_time"] = raw_search.get("response_time")
+            external_context = _format_web_search_context(raw_search, WEB_SEARCH_MAX_CONTEXT_CHARS)
+        except Exception as exc:
+            web_search_meta["error"] = f"{type(exc).__name__}: {exc}"
+            debug_log("web_search", web_search_meta["error"])
     heavy_prompt = _build_context_variant(
         adapter,
         user_text,
@@ -1869,12 +1990,14 @@ def chat_once_detailed(
         use_history=use_history,
         use_summary=use_summary,
         user_id=user_id,
+        external_context=external_context,
     )
     light_prompt = _build_light_context(
         adapter,
         user_text,
         use_summary=use_summary,
         user_id=user_id,
+        external_context=external_context,
     )
 
     try:
@@ -1899,6 +2022,7 @@ def chat_once_detailed(
     meta["latency_s"] = latency_s
     meta["response_mode"] = response_mode
     meta["disable_auto_continue"] = disable_auto_continue
+    meta["web_search"] = web_search_meta
     meta["context_sizes"] = {
         "heavy_prompt_tokens": token_est(heavy_prompt),
         "heavy_prompt_chars": len(heavy_prompt),
