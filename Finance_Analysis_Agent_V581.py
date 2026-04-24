@@ -120,8 +120,20 @@ AGENT_PROVIDER_ORDER = os.getenv("AGENT_PROVIDER_ORDER", "cerebras,groq,mistral,
 AGENT_PROVIDER_DISABLE = os.getenv("AGENT_PROVIDER_DISABLE", "").lower()
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 REQUEST_TIMEOUT_SEC = int(os.getenv("REQUEST_TIMEOUT_SEC", "120"))
-CHAT_PROVIDER_TIMEOUT_SEC = int(os.getenv("CHAT_PROVIDER_TIMEOUT_SEC", "18"))
-OPENROUTER_TIMEOUT_SEC = int(os.getenv("OPENROUTER_TIMEOUT_SEC", str(CHAT_PROVIDER_TIMEOUT_SEC)))
+DEFAULT_PROVIDER_TIMEOUT_SEC = int(os.getenv("DEFAULT_PROVIDER_TIMEOUT_SEC", os.getenv("CHAT_PROVIDER_TIMEOUT_SEC", "18")))
+OPENROUTER_TIMEOUT_SEC = int(os.getenv("OPENROUTER_TIMEOUT_SEC", "25"))
+PROVIDER_READ_TIMEOUTS = {
+    "cerebras": int(os.getenv("CEREBRAS_TIMEOUT_SEC", "5")),
+    "groq": int(os.getenv("GROQ_TIMEOUT_SEC", "8")),
+    "gemini": int(os.getenv("GEMINI_TIMEOUT_SEC", "25")),
+    "mistral": int(os.getenv("MISTRAL_TIMEOUT_SEC", "6")),
+    "openrouter": OPENROUTER_TIMEOUT_SEC,
+    "cloudflare": int(os.getenv("CLOUDFLARE_TIMEOUT_SEC", "10")),
+    "fireworks": int(os.getenv("FIREWORKS_TIMEOUT_SEC", "15")),
+    "nvidia": int(os.getenv("NVIDIA_TIMEOUT_SEC", "30")),
+    "aws": int(os.getenv("AWS_TIMEOUT_SEC", str(DEFAULT_PROVIDER_TIMEOUT_SEC))),
+    "default": DEFAULT_PROVIDER_TIMEOUT_SEC,
+}
 TOKEN_EST_RATIO = float(os.getenv("TOKEN_EST_RATIO", "0.5"))
 MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "9000"))
 MAX_USER_MESSAGE_CHARS = int(os.getenv("MAX_USER_MESSAGE_CHARS", "20000"))
@@ -144,9 +156,6 @@ DEEP_MODE_ROUTE_TIMEOUT_SEC = int(os.getenv("DEEP_MODE_ROUTE_TIMEOUT_SEC", "75")
 FAST_MODE_CONTINUE_ROUNDS = int(os.getenv("FAST_MODE_CONTINUE_ROUNDS", "0"))
 STABLE_MODE_CONTINUE_ROUNDS = int(os.getenv("STABLE_MODE_CONTINUE_ROUNDS", "1"))
 DEEP_MODE_CONTINUE_ROUNDS = int(os.getenv("DEEP_MODE_CONTINUE_ROUNDS", str(AUTO_CONTINUE_MAX_ROUNDS)))
-FAST_MODE_PROVIDER_TIMEOUT_SEC = int(os.getenv("FAST_MODE_PROVIDER_TIMEOUT_SEC", "10"))
-STABLE_MODE_PROVIDER_TIMEOUT_SEC = int(os.getenv("STABLE_MODE_PROVIDER_TIMEOUT_SEC", "14"))
-DEEP_MODE_PROVIDER_TIMEOUT_SEC = int(os.getenv("DEEP_MODE_PROVIDER_TIMEOUT_SEC", "20"))
 
 SYSTEM_POLICY = (
     "你是 CathyChang AI，請用繁體中文回答。"
@@ -913,10 +922,7 @@ def _summarize_openrouter_response(data: Any) -> str:
 
 def _chat_timeout(provider: str) -> int:
     provider = (provider or "").strip().lower()
-    if provider == "openrouter":
-        candidate = OPENROUTER_TIMEOUT_SEC
-    else:
-        candidate = CHAT_PROVIDER_TIMEOUT_SEC
+    candidate = PROVIDER_READ_TIMEOUTS.get(provider, PROVIDER_READ_TIMEOUTS["default"])
     return max(10, min(int(REQUEST_TIMEOUT_SEC), int(candidate)))
 
 
@@ -940,14 +946,9 @@ def _continue_round_limit(response_mode: str) -> int:
     return max(0, min(int(AUTO_CONTINUE_MAX_ROUNDS), int(mapping.get(mode, AUTO_CONTINUE_MAX_ROUNDS))))
 
 
-def _per_attempt_timeout_budget(response_mode: str) -> int:
-    mode = (response_mode or "fast").strip().lower()
-    mapping = {
-        "fast": FAST_MODE_PROVIDER_TIMEOUT_SEC,
-        "stable": STABLE_MODE_PROVIDER_TIMEOUT_SEC,
-        "deep": DEEP_MODE_PROVIDER_TIMEOUT_SEC,
-    }
-    return max(5, min(int(REQUEST_TIMEOUT_SEC), int(mapping.get(mode, STABLE_MODE_PROVIDER_TIMEOUT_SEC))))
+def _per_attempt_timeout_budget(response_mode: str, provider: Optional[str] = None) -> int:
+    del response_mode
+    return _chat_timeout(provider or "")
 
 
 def _effective_timeout(provider: str, timeout_override: Optional[float] = None) -> int:
@@ -958,7 +959,7 @@ def _effective_timeout(provider: str, timeout_override: Optional[float] = None) 
         requested = int(timeout_override)
     except Exception:
         return base_timeout
-    return max(3, min(base_timeout, requested))
+    return max(3, min(int(REQUEST_TIMEOUT_SEC), requested))
 
 
 def _resolve_nvidia_model(model: Optional[str] = None) -> str:
@@ -1404,8 +1405,8 @@ def route_generate(
     route_started = time.perf_counter()
     route_timeout_sec = _route_timeout_budget(response_mode)
     max_continue_rounds = 0 if disable_auto_continue else _continue_round_limit(response_mode)
-    per_attempt_timeout_sec = _per_attempt_timeout_budget(response_mode)
     for provider in providers:
+        per_attempt_timeout_sec = _per_attempt_timeout_budget(response_mode, provider)
         route_elapsed_sec = time.perf_counter() - route_started
         if route_elapsed_sec >= route_timeout_sec:
             provider_trace.append({
