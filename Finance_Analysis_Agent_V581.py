@@ -155,13 +155,48 @@ WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("WEB_SEARCH_MAX_CONTEXT_CHARS", "24
 LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS", "900"))
 WEB_SEARCH_SEARCH_DEPTH = os.getenv("WEB_SEARCH_SEARCH_DEPTH", "basic").strip() or "basic"
 WEB_SEARCH_TOPIC = os.getenv("WEB_SEARCH_TOPIC", "general").strip() or "general"
-WEB_SEARCH_TRIGGER_KEYWORDS = [
-    kw.strip()
-    for kw in os.getenv(
-        "WEB_SEARCH_TRIGGER_KEYWORDS",
-        "最新,現在,今天,目前,最近,明天,價格,股價,匯率,新聞,發布,上架,下架,模型,可用,還在嗎,有沒有,搜尋,查一下,查詢",
-    ).split(",")
-    if kw.strip()
+SEARCH_PRIORITY_1_KEYWORDS = {
+    "今天", "現在", "目前", "剛剛", "最新",
+    "最近", "本週", "本月", "今年", "昨天",
+    "明天", "這幾天", "上週", "最新消息", "剛出",
+    "today", "now", "current", "currently", "latest",
+    "recent", "recently", "this week", "this month", "this year",
+    "yesterday", "tomorrow", "just released", "just announced", "breaking",
+    "live", "real-time", "updated", "as of", "2026",
+    "股價", "匯率", "油價", "金價", "利率",
+    "指數", "天氣", "氣溫", "空氣品質", "地震",
+    "颱風", "停電", "停水",
+    "stock price", "exchange rate", "weather", "temperature", "earthquake",
+    "hurricane", "typhoon", "oil price", "gold price", "interest rate",
+    "inflation rate", "unemployment rate",
+}
+SEARCH_PRIORITY_2_KEYWORDS = {
+    "版本", "更新", "下架", "發布", "上市", "漏洞", "當機", "維護",
+    "version", "update", "release", "deprecated", "end of life",
+    "patch", "vulnerability", "outage", "status", "downtime",
+    "changelog", "roadmap", "beta", "stable release", "EOL", "CVE",
+    "多少錢", "費用", "票價", "學費", "房租",
+    "price", "cost", "how much", "pricing", "rate", "subscription",
+}
+SEARCH_PRIORITY_3_KEYWORDS = {
+    "法規", "政策", "規定", "申請", "條件", "期限", "表格",
+    "regulation", "policy", "requirement", "eligibility",
+    "deadline", "application", "compliance", "official",
+    "排名", "最好的", "推薦", "比較",
+    "best", "top", "ranking", "vs", "benchmark", "leaderboard",
+}
+NO_SEARCH_PATTERNS = {
+    "什麼是", "定義", "解釋", "原理",
+    "what is", "define", "explain", "how does",
+    "計算", "算出", "等於",
+    "calculate", "compute", "equals",
+    "寫一篇", "幫我寫", "翻譯",
+    "write", "translate", "summarize",
+    "歷史上", "過去", "曾經",
+    "historically", "in the past", "used to",
+}
+WEB_SEARCH_EXTRA_KEYWORDS = [
+    kw.strip() for kw in os.getenv("WEB_SEARCH_EXTRA_KEYWORDS", "").split(",") if kw.strip()
 ]
 AUTO_CONTINUE_ENABLED = os.getenv("AUTO_CONTINUE_ENABLED", "true").lower() == "true"
 AUTO_CONTINUE_MAX_ROUNDS = int(os.getenv("AUTO_CONTINUE_MAX_ROUNDS", "2"))
@@ -382,17 +417,84 @@ def _compact_prompt_for_provider(prompt: str, provider: str) -> Tuple[str, Dict[
     }
 
 
-def needs_web_search(query: str) -> bool:
-    if not WEB_SEARCH_ENABLED or not TAVILY_API_KEY:
-        return False
+def search_intent_classifier(query: str) -> Dict[str, Any]:
     text = strip_redundant(query or "")
-    if not text:
-        return False
     lowered = text.lower()
+    if not WEB_SEARCH_ENABLED or not TAVILY_API_KEY:
+        return {
+            "must_search": False,
+            "confidence": 0.0,
+            "reason": "web search disabled",
+            "priority": "disabled",
+            "matched_keyword": "",
+        }
+    if not text:
+        return {
+            "must_search": False,
+            "confidence": 0.0,
+            "reason": "empty query",
+            "priority": "empty",
+            "matched_keyword": "",
+        }
+
     explicit_patterns = [r"查(一下|詢|查)", r"搜尋", r"\bsearch\b", r"\blook up\b"]
-    if any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in explicit_patterns):
-        return True
-    return any(keyword.lower() in lowered for keyword in WEB_SEARCH_TRIGGER_KEYWORDS)
+    if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in explicit_patterns):
+        return {
+            "must_search": True,
+            "confidence": 0.98,
+            "reason": "explicit search request",
+            "priority": "explicit",
+            "matched_keyword": "explicit_search",
+        }
+
+    for pattern in NO_SEARCH_PATTERNS:
+        if pattern.lower() in lowered:
+            return {
+                "must_search": False,
+                "confidence": 0.99,
+                "reason": f"no-search pattern: {pattern}",
+                "priority": "blocked",
+                "matched_keyword": pattern,
+            }
+
+    priority_1 = list(SEARCH_PRIORITY_1_KEYWORDS) + WEB_SEARCH_EXTRA_KEYWORDS
+    for keyword in priority_1:
+        if keyword.lower() in lowered:
+            return {
+                "must_search": True,
+                "confidence": 0.95,
+                "reason": f"即時資訊需求：{keyword}",
+                "priority": "p1",
+                "matched_keyword": keyword,
+            }
+
+    for keyword in SEARCH_PRIORITY_2_KEYWORDS:
+        if keyword.lower() in lowered:
+            return {
+                "must_search": True,
+                "confidence": 0.75,
+                "reason": f"時效性資訊：{keyword}",
+                "priority": "p2",
+                "matched_keyword": keyword,
+            }
+
+    for keyword in SEARCH_PRIORITY_3_KEYWORDS:
+        if keyword.lower() in lowered:
+            return {
+                "must_search": False,
+                "confidence": 0.50,
+                "reason": f"可能需要更新資訊：{keyword}",
+                "priority": "p3",
+                "matched_keyword": keyword,
+            }
+
+    return {
+        "must_search": False,
+        "confidence": 0.05,
+        "reason": "純知識性問題，LLM 直接回答",
+        "priority": "none",
+        "matched_keyword": "",
+    }
 
 
 def search_web(query: str) -> Dict[str, Any]:
@@ -1964,15 +2066,17 @@ def chat_once_detailed(
         return {"reply": "請輸入問題。", "meta": {"provider": "local"}}
 
     adapter = MemoryAdapter(memory=memory, THREAD_ID=THREAD_ID or "WEB_DEFAULT", USER_ID=user_id)
+    search_decision = search_intent_classifier(user_text)
     web_search_meta: Dict[str, Any] = {
         "enabled": bool(WEB_SEARCH_ENABLED and TAVILY_API_KEY),
         "used": False,
         "query": "",
         "results": [],
         "error": "",
+        "decision": search_decision,
     }
     external_context = ""
-    if needs_web_search(user_text):
+    if bool(search_decision.get("must_search")):
         web_search_meta["query"] = user_text
         try:
             raw_search = search_web(user_text)
