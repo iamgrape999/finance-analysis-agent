@@ -86,11 +86,11 @@
               <button id="closeSettingsButton" type="button" class="tiny-button">Close</button>
             </div>
 
-            <section class="settings-card">
-              <h3>General</h3>
-              <label>
-                Backend API URL
-                <input id="apiBaseInput" type="url" placeholder="Leave empty for same origin; use Render URL for GitHub Pages" />
+              <section class="settings-card">
+                <h3>General</h3>
+                <label>
+                  Backend API URL
+                  <input id="apiBaseInput" type="url" placeholder="Leave empty for same origin; use Render URL for GitHub Pages" />
               </label>
 
               <label>
@@ -107,11 +107,25 @@
                 <input id="maxTokensInput" type="number" value="3000" min="3000" max="12000" />
               </label>
 
-              <label>
-                Temperature
-                <input id="temperatureInput" type="number" value="0.2" min="0" max="2" step="0.05" />
-              </label>
-            </section>
+                <label>
+                  Temperature
+                  <input id="temperatureInput" type="number" value="0.2" min="0" max="2" step="0.05" />
+                </label>
+
+                <div class="search-provider-group">
+                  <span class="group-label">Web Search Source</span>
+                  <div class="search-provider-buttons" id="webSearchProviderButtons">
+                    <button type="button" class="search-provider-button is-active" data-search-provider="auto">Auto</button>
+                    <button type="button" class="search-provider-button" data-search-provider="tavily">Tavily</button>
+                    <button type="button" class="search-provider-button" data-search-provider="serper">Serper</button>
+                  </div>
+                </div>
+
+                <label class="checkbox-label">
+                  <input id="forceWebSearchInput" type="checkbox" />
+                  <span>Force Web Search for this message</span>
+                </label>
+              </section>
 
             <section class="settings-card">
               <h3>Routing</h3>

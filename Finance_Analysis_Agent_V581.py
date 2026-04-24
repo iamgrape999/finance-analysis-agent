@@ -149,12 +149,20 @@ LIGHT_USER_MESSAGE_CHARS = int(os.getenv("LIGHT_USER_MESSAGE_CHARS", "1600"))
 LIGHT_HISTORY_TURNS = int(os.getenv("LIGHT_HISTORY_TURNS", "0"))
 WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() == "true"
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
 WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "3"))
 WEB_SEARCH_TIMEOUT_SEC = int(os.getenv("WEB_SEARCH_TIMEOUT_SEC", "8"))
 WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("WEB_SEARCH_MAX_CONTEXT_CHARS", "2400"))
 LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS", "900"))
 WEB_SEARCH_SEARCH_DEPTH = os.getenv("WEB_SEARCH_SEARCH_DEPTH", "basic").strip() or "basic"
 WEB_SEARCH_TOPIC = os.getenv("WEB_SEARCH_TOPIC", "general").strip() or "general"
+WEB_SEARCH_PROVIDER_ORDER = [
+    item.strip().lower()
+    for item in os.getenv("WEB_SEARCH_PROVIDER_ORDER", "tavily,serper").split(",")
+    if item.strip()
+]
+SERPER_GL = os.getenv("SERPER_GL", "tw").strip() or "tw"
+SERPER_HL = os.getenv("SERPER_HL", "zh-tw").strip() or "zh-tw"
 SEARCH_PRIORITY_1_KEYWORDS = {
     "今天", "現在", "目前", "剛剛", "最新",
     "最近", "本週", "本月", "今年", "昨天",
@@ -420,7 +428,7 @@ def _compact_prompt_for_provider(prompt: str, provider: str) -> Tuple[str, Dict[
 def search_intent_classifier(query: str) -> Dict[str, Any]:
     text = strip_redundant(query or "")
     lowered = text.lower()
-    if not WEB_SEARCH_ENABLED or not TAVILY_API_KEY:
+    if not WEB_SEARCH_ENABLED or not (TAVILY_API_KEY or SERPER_API_KEY):
         return {
             "must_search": False,
             "confidence": 0.0,
@@ -497,7 +505,7 @@ def search_intent_classifier(query: str) -> Dict[str, Any]:
     }
 
 
-def search_web(query: str) -> Dict[str, Any]:
+def _search_web_tavily(query: str) -> Dict[str, Any]:
     if not TAVILY_API_KEY:
         raise RuntimeError("TAVILY_API_KEY is not configured")
     payload = {
@@ -529,10 +537,86 @@ def search_web(query: str) -> Dict[str, Any]:
             }
         )
     return {
+        "provider": "tavily",
         "query": payload["query"],
         "results": normalized_results,
         "response_time": data.get("response_time"),
     }
+
+
+def _search_web_serper(query: str) -> Dict[str, Any]:
+    if not SERPER_API_KEY:
+        raise RuntimeError("SERPER_API_KEY is not configured")
+    payload = {
+        "q": strip_redundant(query or ""),
+        "gl": SERPER_GL,
+        "hl": SERPER_HL,
+        "num": int(WEB_SEARCH_MAX_RESULTS),
+    }
+    response = requests.post(
+        "https://google.serper.dev/search",
+        headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+        json=payload,
+        timeout=(5, int(WEB_SEARCH_TIMEOUT_SEC)),
+    )
+    if response.status_code >= 400:
+        body = (response.text or "")[:800].replace("\n", "\\n").replace("\r", "\\r")
+        raise RuntimeError(f"Serper error {response.status_code}: {body}")
+    data = response.json() or {}
+    normalized_results: List[Dict[str, Any]] = []
+    for item in (data.get("organic") or [])[: int(WEB_SEARCH_MAX_RESULTS)]:
+        normalized_results.append(
+            {
+                "title": str(item.get("title") or "").strip(),
+                "url": str(item.get("link") or "").strip(),
+                "content": strip_redundant(str(item.get("snippet") or "")),
+                "score": item.get("position"),
+            }
+        )
+    return {
+        "provider": "serper",
+        "query": payload["q"],
+        "results": normalized_results,
+        "response_time": None,
+    }
+
+
+def search_web(query: str, provider_override: Optional[str] = None) -> Dict[str, Any]:
+    if not (TAVILY_API_KEY or SERPER_API_KEY):
+        raise RuntimeError("No web search provider is configured")
+    provider_override = (provider_override or "").strip().lower()
+    if provider_override in {"tavily", "serper"}:
+        providers = [provider_override]
+    else:
+        providers = list(WEB_SEARCH_PROVIDER_ORDER)
+    errors: List[str] = []
+    attempts: List[str] = []
+    for provider in providers:
+        if provider == "tavily":
+            try:
+                data = _search_web_tavily(query)
+                attempts.append("tavily")
+                data["attempts"] = attempts[:]
+                if errors:
+                    data["fallback_errors"] = errors
+                return data
+            except Exception as exc:
+                attempts.append("tavily")
+                errors.append(f"tavily -> {type(exc).__name__}: {exc}")
+                continue
+        if provider == "serper":
+            try:
+                data = _search_web_serper(query)
+                attempts.append("serper")
+                data["attempts"] = attempts[:]
+                if errors:
+                    data["fallback_errors"] = errors
+                return data
+            except Exception as exc:
+                attempts.append("serper")
+                errors.append(f"serper -> {type(exc).__name__}: {exc}")
+                continue
+    raise RuntimeError(" ; ".join(errors) if errors else "No web search provider could answer")
 
 
 def _format_web_search_context(search_meta: Dict[str, Any], max_chars: int) -> str:
@@ -901,6 +985,8 @@ def provider_diagnostics() -> Dict[str, Any]:
     diag: Dict[str, Any] = {
         "web_search_enabled": bool(WEB_SEARCH_ENABLED),
         "tavily_key_present": bool(TAVILY_API_KEY),
+        "serper_key_present": bool(SERPER_API_KEY),
+        "web_search_provider_order": list(WEB_SEARCH_PROVIDER_ORDER),
         "web_search_max_results": int(WEB_SEARCH_MAX_RESULTS),
         "nvidia_key_present": bool(NVIDIA_API_KEY),
         "nvidia_model": raw_nvidia_model,
@@ -2059,6 +2145,8 @@ def chat_once_detailed(
     user_id: Optional[str] = None,
     response_mode: str = "fast",
     disable_auto_continue: bool = False,
+    web_search_provider_override: Optional[str] = None,
+    force_web_search: bool = False,
 ) -> Dict[str, Any]:
     del min_tokens, summary_chars
     user_text = strip_redundant(user_text_or_prompt)
@@ -2067,22 +2155,38 @@ def chat_once_detailed(
 
     adapter = MemoryAdapter(memory=memory, THREAD_ID=THREAD_ID or "WEB_DEFAULT", USER_ID=user_id)
     search_decision = search_intent_classifier(user_text)
+    if force_web_search and search_decision.get("priority") != "explicit":
+        search_decision = {
+            "must_search": True,
+            "confidence": 1.0,
+            "reason": "forced by UI override",
+            "priority": "forced",
+            "matched_keyword": "force_web_search",
+        }
     web_search_meta: Dict[str, Any] = {
-        "enabled": bool(WEB_SEARCH_ENABLED and TAVILY_API_KEY),
+        "enabled": bool(WEB_SEARCH_ENABLED and (TAVILY_API_KEY or SERPER_API_KEY)),
         "used": False,
         "query": "",
         "results": [],
         "error": "",
         "decision": search_decision,
+        "provider": "",
+        "attempts": [],
+        "fallback_errors": [],
+        "provider_override": (web_search_provider_override or "").strip().lower() or "auto",
+        "forced": bool(force_web_search),
     }
     external_context = ""
     if bool(search_decision.get("must_search")):
         web_search_meta["query"] = user_text
         try:
-            raw_search = search_web(user_text)
+            raw_search = search_web(user_text, provider_override=web_search_provider_override)
             web_search_meta["used"] = bool(raw_search.get("results"))
             web_search_meta["results"] = raw_search.get("results") or []
             web_search_meta["response_time"] = raw_search.get("response_time")
+            web_search_meta["provider"] = raw_search.get("provider") or ""
+            web_search_meta["attempts"] = raw_search.get("attempts") or []
+            web_search_meta["fallback_errors"] = raw_search.get("fallback_errors") or []
             external_context = _format_web_search_context(raw_search, WEB_SEARCH_MAX_CONTEXT_CHARS)
         except Exception as exc:
             web_search_meta["error"] = f"{type(exc).__name__}: {exc}"

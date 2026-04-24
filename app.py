@@ -79,6 +79,8 @@ class ChatRequest(BaseModel):
     disable_auto_continue: bool = False
     provider_order: Optional[str] = Field(default=None, max_length=120)
     model_overrides: Dict[str, str] = Field(default_factory=dict)
+    web_search_provider: str = Field(default="auto", pattern="^(auto|tavily|serper)$")
+    force_web_search: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -207,6 +209,8 @@ def healthz() -> Dict[str, Any]:
         "backend_version": APP_BUILD_ID,
         "web_search_enabled": bool(diagnostics.get("web_search_enabled")),
         "tavily_key_present": bool(diagnostics.get("tavily_key_present")),
+        "serper_key_present": bool(diagnostics.get("serper_key_present")),
+        "web_search_provider_order": diagnostics.get("web_search_provider_order") or [],
         "web_search_max_results": int(diagnostics.get("web_search_max_results") or 0),
         "nvidia_key_present": bool(diagnostics.get("nvidia_key_present")),
         "nvidia_model": str(diagnostics.get("nvidia_model") or ""),
@@ -276,6 +280,8 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             user_id=user_id,
             response_mode=req.response_mode,
             disable_auto_continue=req.disable_auto_continue,
+            web_search_provider_override=req.web_search_provider,
+            force_web_search=req.force_web_search,
         )
     except Exception as exc:
         traceback.print_exc()
@@ -287,6 +293,8 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             "response_mode": req.response_mode,
             "disable_auto_continue": req.disable_auto_continue,
             "model_overrides": list((req.model_overrides or {}).keys()),
+            "web_search_provider": req.web_search_provider,
+            "force_web_search": req.force_web_search,
         }
         raise HTTPException(
             status_code=500,

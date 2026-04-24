@@ -5,6 +5,8 @@ const temperatureInput = document.getElementById("temperatureInput");
 const providerOrderInput = document.getElementById("providerOrderInput");
 const responseModeInput = document.getElementById("responseModeInput");
 const apiBaseInput = document.getElementById("apiBaseInput");
+const webSearchProviderButtons = document.getElementById("webSearchProviderButtons");
+const forceWebSearchInput = document.getElementById("forceWebSearchInput");
 const toggleSidebarButton = document.getElementById("toggleSidebarButton");
 const toggleSettingsButton = document.getElementById("toggleSettingsButton");
 const toggleLogButton = document.getElementById("toggleLogButton");
@@ -59,6 +61,8 @@ const userIdKey = "finance_agent_user_id";
 const apiBaseKey = "finance_agent_api_base";
 const passwordKey = "finance_agent_app_password";
 const responseModeKey = "finance_agent_response_mode";
+const webSearchProviderKey = "finance_agent_web_search_provider";
+const forceWebSearchKey = "finance_agent_force_web_search";
 const CHAT_REQUEST_TIMEOUT_MS = 90000;
 const FRONTEND_BUILD = "2026-04-21-route-budget-v2";
 const responsePresets = {
@@ -97,6 +101,8 @@ let providerReadiness = {};
 let modelDefaults = {};
 let appPassword = localStorage.getItem(passwordKey) || "";
 responseModeInput.value = localStorage.getItem(responseModeKey) || "fast";
+let webSearchProviderMode = localStorage.getItem(webSearchProviderKey) || "auto";
+forceWebSearchInput.checked = localStorage.getItem(forceWebSearchKey) === "true";
 let lastMobileLayoutState = isMobileLayout();
 
 function makeThreadId() {
@@ -227,6 +233,13 @@ function setUnlocked(unlocked) {
   button.disabled = !unlocked;
 }
 
+function updateWebSearchProviderButtons() {
+  if (!webSearchProviderButtons) return;
+  for (const button of webSearchProviderButtons.querySelectorAll("[data-search-provider]")) {
+    button.classList.toggle("is-active", button.dataset.searchProvider === webSearchProviderMode);
+  }
+}
+
 function formatUsage(usage) {
   if (!usage || typeof usage !== "object") return "";
   const prompt = usage.prompt_tokens ?? usage.input_tokens ?? usage.prompt_token_count;
@@ -245,7 +258,10 @@ function summarizeWebSearchDecision(webSearch) {
   const reason = decision.reason || "";
   const priority = decision.priority ? `priority=${decision.priority}` : "";
   const confidence = typeof decision.confidence === "number" ? `confidence=${decision.confidence}` : "";
-  return [reason, priority, confidence].filter(Boolean).join(" | ");
+  const provider = webSearch?.provider ? `provider=${webSearch.provider}` : "";
+  const override = webSearch?.provider_override && webSearch.provider_override !== "auto" ? `override=${webSearch.provider_override}` : "";
+  const forced = webSearch?.forced ? "forced=true" : "";
+  return [reason, priority, confidence, provider, override, forced].filter(Boolean).join(" | ");
 }
 
 function buildWebSourcesElement(webSearch) {
@@ -359,7 +375,19 @@ function logWebSearch(webSearch) {
   if (webSearch.error) {
     log(`web search error: ${webSearch.error}`, "WARN");
   }
+  if (webSearch.provider_override && webSearch.provider_override !== "auto") {
+    log(`web search override requested: ${webSearch.provider_override}`, "TRACE");
+  }
   if (webSearch.used) {
+    if (webSearch.provider) {
+      log(`web search provider: ${webSearch.provider}`, "TRACE");
+    }
+    if (Array.isArray(webSearch.attempts) && webSearch.attempts.length) {
+      log(`web search attempts: ${webSearch.attempts.join(">")}`, "TRACE");
+    }
+    if (Array.isArray(webSearch.fallback_errors) && webSearch.fallback_errors.length) {
+      log(`web search fallback: ${webSearch.fallback_errors.join(" ; ")}`, "WARN");
+    }
     const titles = (Array.isArray(webSearch.results) ? webSearch.results : [])
       .slice(0, 5)
       .map((item) => String(item?.title || item?.url || "").trim())
@@ -453,6 +481,9 @@ async function checkHealth() {
       log(`backend version=${data.backend_version}`, "TRACE");
     }
     const diagnostics = data.provider_diagnostics || {};
+    if (Array.isArray(diagnostics.web_search_provider_order) && diagnostics.web_search_provider_order.length) {
+      log(`web search providers=${diagnostics.web_search_provider_order.join(">")}`, "TRACE");
+    }
     if (diagnostics.nvidia_key_present === false) {
       log("nvidia health: NVIDIA_API_KEY is missing; NVIDIA will be skipped", "WARN");
     } else if (diagnostics.nvidia_model) {
@@ -761,6 +792,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
     log(`${firstProvider} is selected first but not connected; backend will fail over to the next ready provider`, "WARN");
   }
   log(`calling ${endpoint}; user=${userId}; thread=${threadId}; provider_order=${effectiveProviderOrder || "backend"}`, "CALL");
+  log(`web search request: provider=${webSearchProviderMode}; force=${forceWebSearchInput.checked}`, "TRACE");
 
   let timeoutId = null;
   try {
@@ -787,7 +819,9 @@ async function sendMessage(message, endpoint = "/api/chat") {
         response_mode: responseModeInput.value,
         disable_auto_continue: disableAutoContinue,
         provider_order: effectiveProviderOrder,
-        model_overrides: collectModelOverrides()
+        model_overrides: collectModelOverrides(),
+        web_search_provider: webSearchProviderMode,
+        force_web_search: forceWebSearchInput.checked
       })
     });
 
@@ -909,6 +943,22 @@ responseModeInput.addEventListener("change", () => {
   applyResponsePreset(true);
 });
 
+if (webSearchProviderButtons) {
+  webSearchProviderButtons.addEventListener("click", (event) => {
+    const buttonEl = event.target.closest("[data-search-provider]");
+    if (!buttonEl) return;
+    webSearchProviderMode = buttonEl.dataset.searchProvider || "auto";
+    localStorage.setItem(webSearchProviderKey, webSearchProviderMode);
+    updateWebSearchProviderButtons();
+    log(`web search provider override=${webSearchProviderMode}`, "DEBUG");
+  });
+}
+
+forceWebSearchInput.addEventListener("change", () => {
+  localStorage.setItem(forceWebSearchKey, forceWebSearchInput.checked ? "true" : "false");
+  log(`force web search=${forceWebSearchInput.checked}`, "DEBUG");
+});
+
 window.addEventListener("resize", () => {
   const nowMobile = isMobileLayout();
   if (nowMobile === lastMobileLayoutState) return;
@@ -1015,6 +1065,7 @@ passwordUserInput.addEventListener("keydown", (event) => {
 
 log("UI initialized", "STEP");
 log(`frontend build=${FRONTEND_BUILD}`, "TRACE");
+updateWebSearchProviderButtons();
 setUnlocked(false);
 applyResponsePreset(false);
 if (isMobileLayout()) {
