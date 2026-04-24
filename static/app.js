@@ -311,6 +311,18 @@ function buildWebSourcesElement(webSearch) {
   return wrap;
 }
 
+function buildWebSearchBadge(webSearch) {
+  if (!webSearch || typeof webSearch !== "object") return null;
+  if (!webSearch.used || !webSearch.provider) return null;
+
+  const badge = document.createElement("div");
+  badge.className = "message-search-badge";
+  const providerLabel = String(webSearch.provider || "").trim();
+  badge.textContent = `Web search: ${providerLabel}`;
+  badge.title = summarizeWebSearchDecision(webSearch) || `web search provider=${providerLabel}`;
+  return badge;
+}
+
 function addMessage(role, text, meta = {}) {
   const el = document.createElement("article");
   el.className = `message ${role}`;
@@ -318,6 +330,13 @@ function addMessage(role, text, meta = {}) {
   body.className = "message-body";
   body.textContent = text;
   el.appendChild(body);
+
+  if (role !== "user") {
+    const searchBadge = buildWebSearchBadge(meta.web_search);
+    if (searchBadge) {
+      el.appendChild(searchBadge);
+    }
+  }
 
   const metaParts = [];
   if (meta.provider) metaParts.push(`platform=${meta.provider}`);
