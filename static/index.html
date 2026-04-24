@@ -40,11 +40,10 @@
       <div id="protectedApp" class="protected-app app-locked">
         <section id="mainWorkspace" class="workspace">
           <aside class="settings">
-            <h2>Chat</h2>
-            <label>
-              THREAD_ID
-              <input id="threadInput" type="text" />
-            </label>
+            <section class="sidebar-section sidebar-primary-actions">
+              <button id="newThreadButton" type="button" class="sidebar-primary-button">+ New Chat</button>
+              <button id="clearButton" type="button" class="secondary">Clear Screen</button>
+            </section>
 
             <section class="sidebar-section">
               <div class="section-title-row">
@@ -54,9 +53,41 @@
               <div id="threadList" class="thread-list"></div>
             </section>
 
-            <details id="advancedSettings" class="advanced-settings">
-              <summary>Settings and Models</summary>
+            <section class="sidebar-section">
+              <div class="section-title-row">
+                <h3>Global Memory</h3>
+              </div>
+              <div id="globalMemoryList" class="global-memory-list"></div>
+              <div class="global-memory-editor">
+                <input id="globalMemoryKeyInput" type="text" placeholder="key, e.g. customer_segment" />
+                <input id="globalMemoryValueInput" type="text" placeholder="value, e.g. SME" />
+                <button id="saveGlobalMemoryButton" type="button" class="secondary">Save Global Memory</button>
+              </div>
+            </section>
 
+            <section class="sidebar-section sidebar-user-section">
+              <h3>Current Chat</h3>
+              <label>
+                THREAD_ID
+                <input id="threadInput" type="text" />
+              </label>
+            </section>
+          </aside>
+
+          <section id="messages" class="messages" aria-live="polite">
+            <article class="message assistant">
+              Please enter your message. I will keep the chat context in this browser and reply using the provider configured by the backend.
+            </article>
+          </section>
+
+          <aside id="settingsPanel" class="settings-panel">
+            <div class="panel-title-row">
+              <h2>Settings</h2>
+              <button id="closeSettingsButton" type="button" class="tiny-button">Close</button>
+            </div>
+
+            <section class="settings-card">
+              <h3>General</h3>
               <label>
                 Backend API URL
                 <input id="apiBaseInput" type="url" placeholder="Leave empty for same origin; use Render URL for GitHub Pages" />
@@ -71,6 +102,19 @@
                 </select>
               </label>
 
+              <label>
+                Max tokens
+                <input id="maxTokensInput" type="number" value="3000" min="3000" max="12000" />
+              </label>
+
+              <label>
+                Temperature
+                <input id="temperatureInput" type="number" value="0.2" min="0" max="2" step="0.05" />
+              </label>
+            </section>
+
+            <section class="settings-card">
+              <h3>Routing</h3>
               <label>
                 Provider Order
                 <select id="providerOrderInput">
@@ -92,215 +136,218 @@
                 </select>
               </label>
 
-              <label>
-                NVIDIA Model
-                <select id="nvidiaModelInput">
-                  <option value="">Use .env default</option>
-                  <optgroup label="NVIDIA Free Endpoint Production Models">
-                    <option value="meta/llama-4-maverick-17b-128e-instruct">meta/llama-4-maverick-17b-128e-instruct</option>
-                  </optgroup>
-                  <optgroup label="NVIDIA Free Endpoint Preview Models">
-                    <option value="nvidia/nemotron-3-super-120b-a12b">nvidia/nemotron-3-super-120b-a12b</option>
-                    <option value="qwen/qwen3-coder-480b-a35b-instruct">qwen/qwen3-coder-480b-a35b-instruct</option>
-                    <option value="qwen/qwen3.5-122b-a10b">qwen/qwen3.5-122b-a10b</option>
-                    <option value="z-ai/glm-4.7">z-ai/glm-4.7</option>
-                    <option value="z-ai/glm-5.1">z-ai/glm-5.1</option>
-                    <option value="minimaxai/minimax-m2.7">minimaxai/minimax-m2.7</option>
-                    <option value="moonshotai/kimi-k2-instruct">moonshotai/kimi-k2-instruct</option>
-                    <option value="moonshotai/kimi-k2.5">moonshotai/kimi-k2.5</option>
-                    <option value="deepseek-ai/deepseek-v3.2">deepseek-ai/deepseek-v3.2</option>
-                    <option value="deepseek-ai/deepseek-v3.1-terminus">deepseek-ai/deepseek-v3.1-terminus</option>
-                    <option value="deepseek-ai/deepseek-r1">deepseek-ai/deepseek-r1</option>
-                    <option value="stepfun-ai/step-3.5-flash">stepfun-ai/step-3.5-flash</option>
-                    <option value="google/gemma-3-27b-it">google/gemma-3-27b-it</option>
-                    <option value="google/gemma-4-31b-it">google/gemma-4-31b-it</option>
-                    <option value="mistralai/mistral-large-2411">mistralai/mistral-large-2411</option>
-                    <option value="mistralai/mistral-nemotron">mistralai/mistral-nemotron</option>
-                  </optgroup>
-                </select>
-              </label>
+              <button id="selfTestButton" type="button" class="secondary">SelfTest</button>
+            </section>
 
-              <label>
-                Cerebras Model
-                <select id="cerebrasModelInput">
-                  <option value="">Use .env default</option>
-                  <optgroup label="Cerebras Production Models">
-                    <option value="llama3.1-8b">llama3.1-8b</option>
-                  </optgroup>
-                  <optgroup label="Cerebras Preview Models">
-                    <option value="qwen-3-235b-a22b-instruct-2507">qwen-3-235b-a22b-instruct-2507 (deprecated May 27, 2026)</option>
-                    <option value="zai-glm-4.7">zai-glm-4.7</option>
-                  </optgroup>
-                </select>
-              </label>
+            <section class="settings-card">
+              <h3>Models</h3>
 
-              <label>
-                Mistral Model
-                <select id="mistralModelInput">
-                  <option value="">Use .env default</option>
-                  <optgroup label="Mistral Common Models">
-                    <option value="mistral-large-latest">mistral-large-latest</option>
-                    <option value="mistral-medium-latest">mistral-medium-latest</option>
-                    <option value="mistral-small-latest">mistral-small-latest</option>
-                  </optgroup>
-                </select>
-              </label>
+              <details class="model-group">
+                <summary>NVIDIA</summary>
+                <label>
+                  NVIDIA Model
+                  <select id="nvidiaModelInput">
+                    <option value="">Use .env default</option>
+                    <optgroup label="NVIDIA Free Endpoint Production Models">
+                      <option value="meta/llama-4-maverick-17b-128e-instruct">meta/llama-4-maverick-17b-128e-instruct</option>
+                    </optgroup>
+                    <optgroup label="NVIDIA Free Endpoint Preview Models">
+                      <option value="nvidia/nemotron-3-super-120b-a12b">nvidia/nemotron-3-super-120b-a12b</option>
+                      <option value="qwen/qwen3-coder-480b-a35b-instruct">qwen/qwen3-coder-480b-a35b-instruct</option>
+                      <option value="qwen/qwen3.5-122b-a10b">qwen/qwen3.5-122b-a10b</option>
+                      <option value="z-ai/glm-4.7">z-ai/glm-4.7</option>
+                      <option value="z-ai/glm-5.1">z-ai/glm-5.1</option>
+                      <option value="minimaxai/minimax-m2.7">minimaxai/minimax-m2.7</option>
+                      <option value="moonshotai/kimi-k2-instruct">moonshotai/kimi-k2-instruct</option>
+                      <option value="moonshotai/kimi-k2.5">moonshotai/kimi-k2.5</option>
+                      <option value="deepseek-ai/deepseek-v3.2">deepseek-ai/deepseek-v3.2</option>
+                      <option value="deepseek-ai/deepseek-v3.1-terminus">deepseek-ai/deepseek-v3.1-terminus</option>
+                      <option value="deepseek-ai/deepseek-r1">deepseek-ai/deepseek-r1</option>
+                      <option value="stepfun-ai/step-3.5-flash">stepfun-ai/step-3.5-flash</option>
+                      <option value="google/gemma-3-27b-it">google/gemma-3-27b-it</option>
+                      <option value="google/gemma-4-31b-it">google/gemma-4-31b-it</option>
+                      <option value="mistralai/mistral-large-2411">mistralai/mistral-large-2411</option>
+                      <option value="mistralai/mistral-nemotron">mistralai/mistral-nemotron</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </details>
 
-              <label>
-                OpenRouter Model
-                <select id="openrouterModelInput">
-                  <option value="">Use .env default</option>
-                  <optgroup label="OpenRouter Free Models: reasoning high to low">
-                    <option value="openai/gpt-oss-120b:free">openai/gpt-oss-120b:free</option>
-                    <option value="nvidia/nemotron-3-super-120b-a12b:free">nvidia/nemotron-3-super-120b-a12b:free</option>
-                    <option value="arcee-ai/trinity-large-preview:free">arcee-ai/trinity-large-preview:free</option>
-                    <option value="qwen/qwen3-coder:free">qwen/qwen3-coder:free</option>
-                    <option value="qwen/qwen3-next-80b-a3b-instruct:free">qwen/qwen3-next-80b-a3b-instruct:free</option>
-                    <option value="meta-llama/llama-3.3-70b-instruct:free">meta-llama/llama-3.3-70b-instruct:free</option>
-                    <option value="z-ai/glm-4.5-air:free">z-ai/glm-4.5-air:free</option>
-                    <option value="minimax/minimax-m2.5:free">minimax/minimax-m2.5:free</option>
-                    <option value="google/gemma-4-31b-it:free">google/gemma-4-31b-it:free</option>
-                    <option value="nvidia/nemotron-3-nano-30b-a3b:free">nvidia/nemotron-3-nano-30b-a3b:free</option>
-                    <option value="google/gemma-4-26b-a4b-it:free">google/gemma-4-26b-a4b-it:free</option>
-                    <option value="openai/gpt-oss-20b:free">openai/gpt-oss-20b:free</option>
-                    <option value="nvidia/nemotron-nano-9b-v2:free">nvidia/nemotron-nano-9b-v2:free</option>
-                    <option value="openrouter/elephant-alpha">openrouter/elephant-alpha (free)</option>
-                  </optgroup>
-                  <optgroup label="OpenRouter Paid Models: reasoning high to low">
-                    <option value="openai/gpt-4.1-mini">openai/gpt-4.1-mini</option>
-                    <option value="meta-llama/llama-3.1-70b-instruct">meta-llama/llama-3.1-70b-instruct</option>
-                    <option value="anthropic/claude-3.5-haiku">anthropic/claude-3.5-haiku</option>
-                    <option value="openai/gpt-4o-mini">openai/gpt-4o-mini</option>
-                    <option value="google/gemini-flash-1.5">google/gemini-flash-1.5</option>
-                  </optgroup>
-                  <optgroup label="OpenRouter Auto Routing">
-                    <option value="openrouter/free">openrouter/free (auto free model)</option>
-                  </optgroup>
-                </select>
-              </label>
+              <details class="model-group">
+                <summary>Cerebras</summary>
+                <label>
+                  Cerebras Model
+                  <select id="cerebrasModelInput">
+                    <option value="">Use .env default</option>
+                    <optgroup label="Cerebras Production Models">
+                      <option value="llama3.1-8b">llama3.1-8b</option>
+                    </optgroup>
+                    <optgroup label="Cerebras Preview Models">
+                      <option value="qwen-3-235b-a22b-instruct-2507">qwen-3-235b-a22b-instruct-2507 (deprecated May 27, 2026)</option>
+                      <option value="zai-glm-4.7">zai-glm-4.7</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </details>
 
-              <label>
-                Fireworks Model
-                <select id="fireworksModelInput">
-                  <option value="">Use .env default: accounts/fireworks/models/minimax-m2p7; loads available models when connected</option>
-                </select>
-              </label>
+              <details class="model-group">
+                <summary>Mistral</summary>
+                <label>
+                  Mistral Model
+                  <select id="mistralModelInput">
+                    <option value="">Use .env default</option>
+                    <optgroup label="Mistral Common Models">
+                      <option value="mistral-large-latest">mistral-large-latest</option>
+                      <option value="mistral-medium-latest">mistral-medium-latest</option>
+                      <option value="mistral-small-latest">mistral-small-latest</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </details>
 
-              <label>
-                Gemini Model
-                <select id="geminiModelInput">
-                  <option value="">Use .env default</option>
-                  <optgroup label="Gemini Flash / Flash-Lite">
-                    <option value="gemini-3.0-flash">gemini-3.0-flash</option>
-                    <option value="gemini-3.0-flash-lite">gemini-3.0-flash-lite</option>
-                    <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                    <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-                  </optgroup>
-                </select>
-              </label>
+              <details class="model-group">
+                <summary>OpenRouter</summary>
+                <label>
+                  OpenRouter Model
+                  <select id="openrouterModelInput">
+                    <option value="">Use .env default</option>
+                    <optgroup label="OpenRouter Free Models: reasoning high to low">
+                      <option value="openai/gpt-oss-120b:free">openai/gpt-oss-120b:free</option>
+                      <option value="nvidia/nemotron-3-super-120b-a12b:free">nvidia/nemotron-3-super-120b-a12b:free</option>
+                      <option value="arcee-ai/trinity-large-preview:free">arcee-ai/trinity-large-preview:free</option>
+                      <option value="qwen/qwen3-coder:free">qwen/qwen3-coder:free</option>
+                      <option value="qwen/qwen3-next-80b-a3b-instruct:free">qwen/qwen3-next-80b-a3b-instruct:free</option>
+                      <option value="meta-llama/llama-3.3-70b-instruct:free">meta-llama/llama-3.3-70b-instruct:free</option>
+                      <option value="z-ai/glm-4.5-air:free">z-ai/glm-4.5-air:free</option>
+                      <option value="minimax/minimax-m2.5:free">minimax/minimax-m2.5:free</option>
+                      <option value="google/gemma-4-31b-it:free">google/gemma-4-31b-it:free</option>
+                      <option value="nvidia/nemotron-3-nano-30b-a3b:free">nvidia/nemotron-3-nano-30b-a3b:free</option>
+                      <option value="google/gemma-4-26b-a4b-it:free">google/gemma-4-26b-a4b-it:free</option>
+                      <option value="openai/gpt-oss-20b:free">openai/gpt-oss-20b:free</option>
+                      <option value="nvidia/nemotron-nano-9b-v2:free">nvidia/nemotron-nano-9b-v2:free</option>
+                      <option value="openrouter/elephant-alpha">openrouter/elephant-alpha (free)</option>
+                    </optgroup>
+                    <optgroup label="OpenRouter Paid Models: reasoning high to low">
+                      <option value="openai/gpt-4.1-mini">openai/gpt-4.1-mini</option>
+                      <option value="meta-llama/llama-3.1-70b-instruct">meta-llama/llama-3.1-70b-instruct</option>
+                      <option value="anthropic/claude-3.5-haiku">anthropic/claude-3.5-haiku</option>
+                      <option value="openai/gpt-4o-mini">openai/gpt-4o-mini</option>
+                      <option value="google/gemini-flash-1.5">google/gemini-flash-1.5</option>
+                    </optgroup>
+                    <optgroup label="OpenRouter Auto Routing">
+                      <option value="openrouter/free">openrouter/free (auto free model)</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </details>
 
-              <label>
-                Cloudflare Model
-                <select id="cloudflareModelInput">
-                  <option value="">Use .env default</option>
-                  <optgroup label="Cloudflare Text Models: reasoning high to low">
-                    <option value="@cf/openai/gpt-oss-120b">@cf/openai/gpt-oss-120b</option>
-                    <option value="@cf/meta/llama-3.1-70b-instruct">@cf/meta/llama-3.1-70b-instruct</option>
-                    <option value="@cf/meta/llama-4-scout-17b-16e-instruct">@cf/meta/llama-4-scout-17b-16e-instruct</option>
-                    <option value="@cf/zai-org/glm-4.7-flash">@cf/zai-org/glm-4.7-flash</option>
-                    <option value="@cf/qwen/qwen3-30b-a3b-fp8">@cf/qwen/qwen3-30b-a3b-fp8</option>
-                    <option value="@cf/openai/gpt-oss-20b">@cf/openai/gpt-oss-20b</option>
-                    <option value="@cf/meta/llama-3.1-8b-instruct">@cf/meta/llama-3.1-8b-instruct</option>
-                  </optgroup>
-                  <optgroup label="Cloudflare Legacy / Compatibility">
-                    <option value="@cf/mistral/mistral-7b-instruct-v0.2">@cf/mistral/mistral-7b-instruct-v0.2</option>
-                  </optgroup>
-                </select>
-              </label>
+              <details class="model-group">
+                <summary>Fireworks</summary>
+                <label>
+                  Fireworks Model
+                  <select id="fireworksModelInput">
+                    <option value="">Use .env default: accounts/fireworks/models/minimax-m2p7; loads available models when connected</option>
+                  </select>
+                </label>
+              </details>
 
-              <label>
-                Groq Model
-                <select id="groqModelInput">
-                  <option value="">Use .env default</option>
-                  <optgroup label="Groq Production Models: reasoning high to low">
-                    <option value="openai/gpt-oss-120b">openai/gpt-oss-120b</option>
-                    <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
-                    <option value="openai/gpt-oss-20b">openai/gpt-oss-20b</option>
-                    <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
-                  </optgroup>
-                  <optgroup label="Groq Systems">
-                    <option value="groq/compound">groq/compound</option>
-                    <option value="groq/compound-mini">groq/compound-mini</option>
-                  </optgroup>
-                  <optgroup label="Groq Legacy / Compatibility">
-                    <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
-                    <option value="gemma2-9b-it">gemma2-9b-it</option>
-                  </optgroup>
-                </select>
-              </label>
+              <details class="model-group">
+                <summary>Gemini</summary>
+                <label>
+                  Gemini Model
+                  <select id="geminiModelInput">
+                    <option value="">Use .env default</option>
+                    <optgroup label="Gemini Flash / Flash-Lite">
+                      <option value="gemini-3.0-flash">gemini-3.0-flash</option>
+                      <option value="gemini-3.0-flash-lite">gemini-3.0-flash-lite</option>
+                      <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                      <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </details>
 
-              <label>
-                AWS Bedrock Model
-                <select id="awsModelInput">
-                  <option value="">Use .env default</option>
-                  <optgroup label="Claude 4.6 / Latest">
-                    <option value="anthropic.claude-sonnet-4-6">anthropic.claude-sonnet-4-6</option>
-                    <option value="us.anthropic.claude-sonnet-4-6">us.anthropic.claude-sonnet-4-6</option>
-                    <option value="global.anthropic.claude-sonnet-4-6">global.anthropic.claude-sonnet-4-6</option>
-                    <option value="anthropic.claude-opus-4-6-v1">anthropic.claude-opus-4-6-v1</option>
-                    <option value="us.anthropic.claude-opus-4-6-v1">us.anthropic.claude-opus-4-6-v1</option>
-                    <option value="global.anthropic.claude-opus-4-6-v1">global.anthropic.claude-opus-4-6-v1</option>
-                  </optgroup>
-                  <optgroup label="Claude 4.5">
-                    <option value="anthropic.claude-opus-4-5-20251101-v1:0">anthropic.claude-opus-4-5-20251101-v1:0</option>
-                    <option value="us.anthropic.claude-opus-4-5-20251101-v1:0">us.anthropic.claude-opus-4-5-20251101-v1:0</option>
-                    <option value="global.anthropic.claude-opus-4-5-20251101-v1:0">global.anthropic.claude-opus-4-5-20251101-v1:0</option>
-                    <option value="anthropic.claude-sonnet-4-5-20250929-v1:0">anthropic.claude-sonnet-4-5-20250929-v1:0</option>
-                    <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">us.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
-                    <option value="global.anthropic.claude-sonnet-4-5-20250929-v1:0">global.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
-                    <option value="anthropic.claude-haiku-4-5-20251001-v1:0">anthropic.claude-haiku-4-5-20251001-v1:0</option>
-                    <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">us.anthropic.claude-haiku-4-5-20251001-v1:0</option>
-                    <option value="global.anthropic.claude-haiku-4-5-20251001-v1:0">global.anthropic.claude-haiku-4-5-20251001-v1:0</option>
-                  </optgroup>
-                  <optgroup label="Claude 3.x / Compatibility">
-                    <option value="anthropic.claude-3-haiku-20240307-v1:0">anthropic.claude-3-haiku-20240307-v1:0</option>
-                    <option value="anthropic.claude-3-5-haiku-20241022-v1:0">anthropic.claude-3-5-haiku-20241022-v1:0</option>
-                    <option value="anthropic.claude-3-5-sonnet-20241022-v2:0">anthropic.claude-3-5-sonnet-20241022-v2:0</option>
-                  </optgroup>
-                </select>
-              </label>
+              <details class="model-group">
+                <summary>Cloudflare</summary>
+                <label>
+                  Cloudflare Model
+                  <select id="cloudflareModelInput">
+                    <option value="">Use .env default</option>
+                    <optgroup label="Cloudflare Text Models: reasoning high to low">
+                      <option value="@cf/openai/gpt-oss-120b">@cf/openai/gpt-oss-120b</option>
+                      <option value="@cf/meta/llama-3.1-70b-instruct">@cf/meta/llama-3.1-70b-instruct</option>
+                      <option value="@cf/meta/llama-4-scout-17b-16e-instruct">@cf/meta/llama-4-scout-17b-16e-instruct</option>
+                      <option value="@cf/zai-org/glm-4.7-flash">@cf/zai-org/glm-4.7-flash</option>
+                      <option value="@cf/qwen/qwen3-30b-a3b-fp8">@cf/qwen/qwen3-30b-a3b-fp8</option>
+                      <option value="@cf/openai/gpt-oss-20b">@cf/openai/gpt-oss-20b</option>
+                      <option value="@cf/meta/llama-3.1-8b-instruct">@cf/meta/llama-3.1-8b-instruct</option>
+                    </optgroup>
+                    <optgroup label="Cloudflare Legacy / Compatibility">
+                      <option value="@cf/mistral/mistral-7b-instruct-v0.2">@cf/mistral/mistral-7b-instruct-v0.2</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </details>
 
-              <label>
-                Max tokens
-                <input id="maxTokensInput" type="number" value="3000" min="3000" max="12000" />
-              </label>
+              <details class="model-group">
+                <summary>Groq</summary>
+                <label>
+                  Groq Model
+                  <select id="groqModelInput">
+                    <option value="">Use .env default</option>
+                    <optgroup label="Groq Production Models: reasoning high to low">
+                      <option value="openai/gpt-oss-120b">openai/gpt-oss-120b</option>
+                      <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+                      <option value="openai/gpt-oss-20b">openai/gpt-oss-20b</option>
+                      <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
+                    </optgroup>
+                    <optgroup label="Groq Systems">
+                      <option value="groq/compound">groq/compound</option>
+                      <option value="groq/compound-mini">groq/compound-mini</option>
+                    </optgroup>
+                    <optgroup label="Groq Legacy / Compatibility">
+                      <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
+                      <option value="gemma2-9b-it">gemma2-9b-it</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </details>
 
-              <label>
-                Temperature
-                <input id="temperatureInput" type="number" value="0.2" min="0" max="2" step="0.05" />
-              </label>
-            </details>
-
-            <button id="selfTestButton" type="button" class="secondary">SelfTest</button>
-            <button id="newThreadButton" type="button" class="secondary">New Thread</button>
-            <button id="clearButton" type="button" class="secondary">Clear Screen</button>
-
-            <section class="sidebar-section">
-              <h3>Global Memory</h3>
-              <div id="globalMemoryList" class="global-memory-list"></div>
-              <div class="global-memory-editor">
-                <input id="globalMemoryKeyInput" type="text" placeholder="key, e.g. customer_segment, or paste customer_segment=SME" />
-                <input id="globalMemoryValueInput" type="text" placeholder="value, e.g. SME" />
-                <button id="saveGlobalMemoryButton" type="button" class="secondary">Save Global Memory</button>
-              </div>
+              <details class="model-group">
+                <summary>AWS Bedrock</summary>
+                <label>
+                  AWS Bedrock Model
+                  <select id="awsModelInput">
+                    <option value="">Use .env default</option>
+                    <optgroup label="Claude 4.6 / Latest">
+                      <option value="anthropic.claude-sonnet-4-6">anthropic.claude-sonnet-4-6</option>
+                      <option value="us.anthropic.claude-sonnet-4-6">us.anthropic.claude-sonnet-4-6</option>
+                      <option value="global.anthropic.claude-sonnet-4-6">global.anthropic.claude-sonnet-4-6</option>
+                      <option value="anthropic.claude-opus-4-6-v1">anthropic.claude-opus-4-6-v1</option>
+                      <option value="us.anthropic.claude-opus-4-6-v1">us.anthropic.claude-opus-4-6-v1</option>
+                      <option value="global.anthropic.claude-opus-4-6-v1">global.anthropic.claude-opus-4-6-v1</option>
+                    </optgroup>
+                    <optgroup label="Claude 4.5">
+                      <option value="anthropic.claude-opus-4-5-20251101-v1:0">anthropic.claude-opus-4-5-20251101-v1:0</option>
+                      <option value="us.anthropic.claude-opus-4-5-20251101-v1:0">us.anthropic.claude-opus-4-5-20251101-v1:0</option>
+                      <option value="global.anthropic.claude-opus-4-5-20251101-v1:0">global.anthropic.claude-opus-4-5-20251101-v1:0</option>
+                      <option value="anthropic.claude-sonnet-4-5-20250929-v1:0">anthropic.claude-sonnet-4-5-20250929-v1:0</option>
+                      <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">us.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
+                      <option value="global.anthropic.claude-sonnet-4-5-20250929-v1:0">global.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
+                      <option value="anthropic.claude-haiku-4-5-20251001-v1:0">anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                      <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">us.anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                      <option value="global.anthropic.claude-haiku-4-5-20251001-v1:0">global.anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                    </optgroup>
+                    <optgroup label="Claude 3.x / Compatibility">
+                      <option value="anthropic.claude-3-haiku-20240307-v1:0">anthropic.claude-3-haiku-20240307-v1:0</option>
+                      <option value="anthropic.claude-3-5-haiku-20241022-v1:0">anthropic.claude-3-5-haiku-20241022-v1:0</option>
+                      <option value="anthropic.claude-3-5-sonnet-20241022-v2:0">anthropic.claude-3-5-sonnet-20241022-v2:0</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </details>
             </section>
           </aside>
-
-          <section id="messages" class="messages" aria-live="polite">
-            <article class="message assistant">
-              Please enter your message. I will keep the chat context in this browser and reply using the provider configured by the backend.
-            </article>
-          </section>
 
           <aside id="logPanel" class="log-panel">
             <div class="panel-title-row">

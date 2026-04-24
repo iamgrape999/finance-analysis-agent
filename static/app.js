@@ -9,7 +9,8 @@ const toggleSidebarButton = document.getElementById("toggleSidebarButton");
 const toggleSettingsButton = document.getElementById("toggleSettingsButton");
 const toggleLogButton = document.getElementById("toggleLogButton");
 const closeLogButton = document.getElementById("closeLogButton");
-const advancedSettings = document.getElementById("advancedSettings");
+const settingsPanel = document.getElementById("settingsPanel");
+const closeSettingsButton = document.getElementById("closeSettingsButton");
 const modelInputs = {
   nvidia: document.getElementById("nvidiaModelInput"),
   cerebras: document.getElementById("cerebrasModelInput"),
@@ -216,6 +217,7 @@ function collapseMobilePanels() {
   if (!isMobileLayout()) return;
   mainWorkspace.classList.add("sidebar-collapsed");
   logPanel.classList.remove("is-open");
+  mainWorkspace.classList.remove("settings-open");
 }
 
 function setUnlocked(unlocked) {
@@ -772,23 +774,32 @@ input.addEventListener("keydown", (event) => {
 
 toggleSidebarButton.addEventListener("click", () => {
   mainWorkspace.classList.toggle("sidebar-collapsed");
+  mainWorkspace.classList.remove("settings-open");
   logPanel.classList.remove("is-open");
 });
 
 toggleSettingsButton.addEventListener("click", () => {
-  mainWorkspace.classList.remove("sidebar-collapsed");
-  advancedSettings.open = !advancedSettings.open;
+  if (isMobileLayout()) {
+    mainWorkspace.classList.add("sidebar-collapsed");
+    logPanel.classList.remove("is-open");
+  }
+  mainWorkspace.classList.toggle("settings-open");
 });
 
 toggleLogButton.addEventListener("click", () => {
   if (isMobileLayout()) {
     mainWorkspace.classList.add("sidebar-collapsed");
+    mainWorkspace.classList.remove("settings-open");
   }
   logPanel.classList.toggle("is-open");
 });
 
 closeLogButton.addEventListener("click", () => {
   logPanel.classList.remove("is-open");
+});
+
+closeSettingsButton.addEventListener("click", () => {
+  mainWorkspace.classList.remove("settings-open");
 });
 
 threadInput.addEventListener("change", () => {
@@ -926,6 +937,7 @@ if (isMobileLayout()) {
 window.addEventListener("resize", () => {
   if (isMobileLayout()) {
     mainWorkspace.classList.add("sidebar-collapsed");
+    mainWorkspace.classList.remove("settings-open");
     logPanel.classList.remove("is-open");
   }
 });
