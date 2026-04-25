@@ -30,6 +30,9 @@ jobs:
       - name: Compile Python entrypoints
         run: python -m py_compile app.py Finance_Analysis_Agent_V581.py
 
+      - name: Run automated unit tests
+        run: python -m unittest discover -s tests -v
+
       - name: Check diff formatting
         run: git diff --check
 
