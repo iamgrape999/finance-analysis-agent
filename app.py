@@ -1,9 +1,15 @@
 ﻿from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
 import re
 import hmac
+import time
 import traceback
+from collections import defaultdict, deque
+from threading import Lock
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
@@ -45,6 +51,17 @@ STATIC_DIR = os.getenv("STATIC_DIR", "static")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
 APP_USERS_RAW = os.getenv("APP_USERS", "").strip()
 APP_BUILD_ID = os.getenv("APP_BUILD_ID", "2026-04-21-route-budget-v2")
+SESSION_SECRET = (
+    os.getenv("SESSION_SECRET", "").strip()
+    or APP_PASSWORD
+    or APP_USERS_RAW
+    or APP_NAME
+)
+SESSION_TTL_SEC = max(300, int(os.getenv("SESSION_TTL_SEC", "28800")))
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+RATE_LIMIT_MAX_REQUESTS = max(1, int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "12")))
+RATE_LIMIT_WINDOW_SEC = max(10, int(os.getenv("RATE_LIMIT_WINDOW_SEC", "60")))
+RATE_LIMIT_SELFTEST_MAX_REQUESTS = max(1, int(os.getenv("RATE_LIMIT_SELFTEST_MAX_REQUESTS", "6")))
 MODE_DEFAULT_MAX_TOKENS = {
     "fast": int(os.getenv("FAST_MODE_MAX_TOKENS", "768")),
     "stable": int(os.getenv("STABLE_MODE_MAX_TOKENS", "2048")),
@@ -57,6 +74,8 @@ MODE_DEFAULT_PROVIDER_ORDER = {
 }
 
 app = FastAPI(title=APP_NAME)
+_RATE_LIMIT_LOCK = Lock()
+_RATE_LIMIT_BUCKETS: Dict[str, deque[float]] = defaultdict(deque)
 
 origins = [item.strip() for item in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if item.strip()]
 app.add_middleware(
@@ -118,6 +137,47 @@ class GlobalFactRequest(BaseModel):
     value: str = Field(default="", max_length=2000)
 
 
+class SessionRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=80)
+    password: str = Field(default="", max_length=2000)
+
+
+def _rate_limit_key(user_id: str, scope: str) -> str:
+    return f"{scope}:{user_id}"
+
+
+def enforce_rate_limit(user_id: str, scope: str = "chat") -> None:
+    if not RATE_LIMIT_ENABLED:
+        return
+
+    limit = RATE_LIMIT_MAX_REQUESTS
+    if scope == "selftest":
+        limit = RATE_LIMIT_SELFTEST_MAX_REQUESTS
+
+    now = time.monotonic()
+    window_start = now - RATE_LIMIT_WINDOW_SEC
+    bucket_key = _rate_limit_key(user_id, scope)
+
+    with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_BUCKETS[bucket_key]
+        while bucket and bucket[0] <= window_start:
+            bucket.popleft()
+
+        if len(bucket) >= limit:
+            retry_after = max(1, int(RATE_LIMIT_WINDOW_SEC - (now - bucket[0])))
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Rate limit exceeded for user '{user_id}' on scope '{scope}'. "
+                    f"Limit={limit} requests per {RATE_LIMIT_WINDOW_SEC}s. "
+                    f"Retry after about {retry_after}s."
+                ),
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        bucket.append(now)
+
+
 def _sanitize_user_id(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", (value or "").strip())[:80]
 
@@ -145,33 +205,109 @@ def configured_users() -> Dict[str, str]:
     return _parse_app_users()
 
 
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(data: str) -> bytes:
+    padding = "=" * ((4 - len(data) % 4) % 4)
+    return base64.urlsafe_b64decode((data + padding).encode("ascii"))
+
+
+def _session_secret_bytes() -> bytes:
+    return SESSION_SECRET.encode("utf-8")
+
+
+def _validate_login_credentials(user_id: str, password: str) -> str:
+    normalized_user_id = _sanitize_user_id(user_id)
+    if not normalized_user_id:
+        raise HTTPException(status_code=400, detail="Missing user id")
+
+    users = configured_users()
+    if users:
+        expected = users.get(normalized_user_id)
+        if not expected or not hmac.compare_digest(password or "", expected):
+            raise HTTPException(status_code=401, detail="Invalid user id or password")
+        return normalized_user_id
+
+    if APP_PASSWORD and not hmac.compare_digest(password or "", APP_PASSWORD):
+        raise HTTPException(status_code=401, detail="Invalid app password")
+    return normalized_user_id
+
+
+def create_session_token(user_id: str) -> str:
+    now = int(time.time())
+    payload = {
+        "uid": _sanitize_user_id(user_id),
+        "iat": now,
+        "exp": now + SESSION_TTL_SEC,
+        "ver": 1,
+    }
+    payload_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    payload_b64 = _b64url_encode(payload_bytes)
+    signature = hmac.new(_session_secret_bytes(), payload_bytes, hashlib.sha256).digest()
+    return f"{payload_b64}.{_b64url_encode(signature)}"
+
+
+def verify_session_token(token: str, expected_user_id: str) -> str:
+    raw = (token or "").strip()
+    if "." not in raw:
+        raise HTTPException(status_code=401, detail="Invalid session token")
+
+    payload_b64, sig_b64 = raw.split(".", 1)
+    try:
+        payload_bytes = _b64url_decode(payload_b64)
+        given_sig = _b64url_decode(sig_b64)
+        expected_sig = hmac.new(_session_secret_bytes(), payload_bytes, hashlib.sha256).digest()
+        if not hmac.compare_digest(given_sig, expected_sig):
+            raise HTTPException(status_code=401, detail="Invalid session token")
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid session token: {type(exc).__name__}") from exc
+
+    token_user_id = _sanitize_user_id(str(payload.get("uid") or ""))
+    if token_user_id != _sanitize_user_id(expected_user_id):
+        raise HTTPException(status_code=401, detail="Session token user mismatch")
+    if int(payload.get("exp") or 0) < int(time.time()):
+        raise HTTPException(status_code=401, detail="Session token expired")
+    return token_user_id
+
+
 def require_auth(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> str:
     user_id = re.sub(r"[^A-Za-z0-9._-]+", "_", (x_user_id or "").strip())[:80]
     if not user_id:
         raise HTTPException(status_code=400, detail="Missing X-User-Id")
 
-    users = configured_users()
-    password = x_app_password or ""
-    if users:
-        expected = users.get(user_id)
-        if not expected or not hmac.compare_digest(password, expected):
-            raise HTTPException(status_code=401, detail="Invalid user id or password")
-        return user_id
+    if x_session_token:
+        return verify_session_token(x_session_token, user_id)
 
-    if APP_PASSWORD and not hmac.compare_digest(password, APP_PASSWORD):
-        raise HTTPException(status_code=401, detail="Invalid app password")
-    return user_id
+    return _validate_login_credentials(user_id, x_app_password or "")
+
+
+@app.post("/api/session")
+def create_session(req: SessionRequest) -> Dict[str, Any]:
+    user_id = _validate_login_credentials(req.user_id, req.password)
+    return {
+        "ok": True,
+        "user_id": user_id,
+        "session_token": create_session_token(user_id),
+        "expires_in_sec": SESSION_TTL_SEC,
+    }
 
 
 @app.get("/api/health")
 def health(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, x_session_token)
     users = configured_users()
     return {
         "ok": True,
@@ -179,10 +315,18 @@ def health(
         "backend_version": APP_BUILD_ID,
         "auth_mode": "per_user" if users else "shared_password",
         "password_required": bool(APP_PASSWORD or users),
+        "session_auth_enabled": True,
+        "session_ttl_sec": SESSION_TTL_SEC,
         "user_required": True,
         "user_id": user_id,
         "configured_user_count": len(users),
         "storage_scope": f"users/{user_id}",
+        "rate_limit": {
+            "enabled": RATE_LIMIT_ENABLED,
+            "chat_max_requests": RATE_LIMIT_MAX_REQUESTS,
+            "selftest_max_requests": RATE_LIMIT_SELFTEST_MAX_REQUESTS,
+            "window_sec": RATE_LIMIT_WINDOW_SEC,
+        },
         "providers": provider_readiness(),
         "provider_diagnostics": provider_diagnostics(),
         "provider_order": resolve_provider_order(),
@@ -207,6 +351,12 @@ def healthz() -> Dict[str, Any]:
         "ok": True,
         "app": APP_NAME,
         "backend_version": APP_BUILD_ID,
+        "rate_limit_enabled": RATE_LIMIT_ENABLED,
+        "rate_limit_max_requests": RATE_LIMIT_MAX_REQUESTS,
+        "rate_limit_selftest_max_requests": RATE_LIMIT_SELFTEST_MAX_REQUESTS,
+        "rate_limit_window_sec": RATE_LIMIT_WINDOW_SEC,
+        "session_auth_enabled": True,
+        "session_ttl_sec": SESSION_TTL_SEC,
         "web_search_enabled": bool(diagnostics.get("web_search_enabled")),
         "tavily_key_present": bool(diagnostics.get("tavily_key_present")),
         "serper_key_present": bool(diagnostics.get("serper_key_present")),
@@ -237,8 +387,10 @@ def chat(
     req: ChatRequest,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> ChatResponse:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, x_session_token)
+    enforce_rate_limit(user_id, scope="chat")
     return _chat_impl(req, user_id=user_id)
 
 
@@ -311,8 +463,10 @@ def selftest(
     req: ChatRequest,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> ChatResponse:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, x_session_token)
+    enforce_rate_limit(user_id, scope="selftest")
     req.message = "SelfTest：請只回覆 OK，並用繁體中文。"
     req.max_tokens = req.max_tokens or 256
     req.temperature = 0.0
@@ -324,8 +478,9 @@ def messages(
     thread_id: str,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> List[Dict[str, Any]]:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, x_session_token)
     adapter = MemoryAdapter(memory=None, THREAD_ID=thread_id, USER_ID=user_id)
     return adapter.load_chat_raw()
 
@@ -334,8 +489,9 @@ def messages(
 def threads(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> List[Dict[str, Any]]:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, x_session_token)
     return list_thread_summaries(user_id=user_id)
 
 
@@ -344,8 +500,9 @@ def delete_thread(
     thread_id: str,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, x_session_token)
     return {"ok": delete_thread_memory(thread_id, user_id=user_id), "thread_id": thread_id}
 
 
@@ -353,8 +510,9 @@ def delete_thread(
 def global_memory(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, x_session_token)
     return {"ok": True, "facts": load_global_facts(user_id=user_id)}
 
 
@@ -363,8 +521,9 @@ def save_global_memory_fact(
     req: GlobalFactRequest,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, x_session_token)
     key = req.key.strip()
     value = req.value.strip()
     if "=" in key and not value:
@@ -377,8 +536,9 @@ def remove_global_memory_fact(
     key: str,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, x_session_token)
     return {"ok": True, "facts": delete_global_fact(key, user_id=user_id)}
 
 
@@ -388,8 +548,9 @@ def provider_probe(
     model: Optional[str] = None,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_auth(x_app_password, x_user_id)
+    require_auth(x_app_password, x_user_id, x_session_token)
     provider = provider.strip().lower()
     active_model = (model or "").strip()
     try:
@@ -431,8 +592,9 @@ def provider_models(
     provider: str,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_auth(x_app_password, x_user_id)
+    require_auth(x_app_password, x_user_id, x_session_token)
     provider = provider.strip().lower()
     try:
         if provider == "fireworks":

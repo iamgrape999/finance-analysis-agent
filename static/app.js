@@ -60,7 +60,7 @@ if (!passwordUserInput) {
 const threadKey = "finance_agent_thread_id";
 const userIdKey = "finance_agent_user_id";
 const apiBaseKey = "finance_agent_api_base";
-const passwordKey = "finance_agent_app_password";
+const sessionTokenKey = "finance_agent_session_token";
 const responseModeKey = "finance_agent_response_mode";
 const webSearchProviderKey = "finance_agent_web_search_provider";
 const forceWebSearchKey = "finance_agent_force_web_search";
@@ -101,7 +101,7 @@ apiBaseInput.value = localStorage.getItem(apiBaseKey) || "";
 passwordApiBaseInput.value = apiBaseInput.value;
 let providerReadiness = {};
 let modelDefaults = {};
-let appPassword = localStorage.getItem(passwordKey) || "";
+let sessionToken = sessionStorage.getItem(sessionTokenKey) || "";
 responseModeInput.value = localStorage.getItem(responseModeKey) || "fast";
 let webSearchProviderMode = localStorage.getItem(webSearchProviderKey) || "auto";
 forceWebSearchInput.checked = localStorage.getItem(forceWebSearchKey) === "true";
@@ -175,6 +175,29 @@ function apiUrl(path) {
   return base ? `${base}${path}` : path;
 }
 
+function clearSessionToken() {
+  sessionToken = "";
+  sessionStorage.removeItem(sessionTokenKey);
+}
+
+async function createSession(userIdValue, passwordValue) {
+  const res = await fetch(apiUrl("/api/session"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: userIdValue,
+      password: passwordValue || ""
+    })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.session_token) {
+    throw new Error(data.detail || `HTTP ${res.status}`);
+  }
+  sessionToken = String(data.session_token || "");
+  sessionStorage.setItem(sessionTokenKey, sessionToken);
+  return data;
+}
+
 function syncApiBaseFromLogin() {
   const value = normalizeApiBase(passwordApiBaseInput.value);
   passwordApiBaseInput.value = value;
@@ -199,8 +222,8 @@ function friendlyNetworkError(err) {
 
 function authHeaders(extra = {}) {
   const headers = { ...extra };
-  if (appPassword) {
-    headers["X-App-Password"] = appPassword;
+  if (sessionToken) {
+    headers["X-Session-Token"] = sessionToken;
   }
   if (userId) {
     headers["X-User-Id"] = userId;
@@ -506,9 +529,10 @@ async function checkHealth() {
     const res = await fetch(apiUrl("/api/health"), { headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
+      clearSessionToken();
       setUnlocked(false);
-      passwordError.textContent = "密碼不正確，請重新輸入。";
-      log("health unauthorized: invalid password", "WARN");
+      passwordError.textContent = "登入已失效，請重新輸入密碼取得新的 session。";
+      log("health unauthorized: invalid or expired session", "WARN");
       return;
     }
     if (!res.ok) {
@@ -826,7 +850,7 @@ function fireworksRank(name) {
 async function sendMessage(message, endpoint = "/api/chat") {
   if (!message) return;
   if (protectedApp.classList.contains("app-locked")) {
-    passwordError.textContent = "請先輸入密碼並連線。";
+    passwordError.textContent = "請先登入並取得有效 session。";
     return;
   }
 
@@ -875,9 +899,10 @@ async function sendMessage(message, endpoint = "/api/chat") {
 
     const data = await res.json();
     if (res.status === 401) {
+      clearSessionToken();
       setUnlocked(false);
-      passwordError.textContent = "密碼不正確，請重新輸入。";
-      throw new Error("Invalid app password");
+      passwordError.textContent = "登入已失效，請重新輸入密碼取得新的 session。";
+      throw new Error("Invalid or expired session");
     }
     if (!res.ok) {
       throw new Error(data.detail || `HTTP ${res.status}`);
@@ -1080,7 +1105,7 @@ globalMemoryList.addEventListener("click", (event) => {
   }
 });
 
-passwordButton.addEventListener("click", () => {
+passwordButton.addEventListener("click", async () => {
   syncApiBaseFromLogin();
   const nextUserId = sanitizeUserId(passwordUserInput.value);
   if (!nextUserId) {
@@ -1088,21 +1113,38 @@ passwordButton.addEventListener("click", () => {
     log("login blocked: missing user id", "WARN");
     return;
   }
-  const userChanged = nextUserId !== userId;
-  userId = nextUserId;
-  passwordUserInput.value = userId;
-  localStorage.setItem(userIdKey, userId);
-  if (userChanged) {
-    threadId = localStorage.getItem(threadStorageKey()) || makeThreadId();
-    localStorage.setItem(threadStorageKey(), threadId);
-    threadInput.value = threadId;
-    messages.innerHTML = "";
-    addMessage("assistant", `已切換使用者：${userId}。歷史對話與全域記憶只會顯示此使用者的資料。`);
+  const passwordValue = passwordInput.value || "";
+  passwordButton.disabled = true;
+  passwordButton.textContent = "連線中";
+  try {
+    const previousUserId = userId;
+    const userChanged = nextUserId !== previousUserId;
+    const sessionData = await createSession(nextUserId, passwordValue);
+    userId = sanitizeUserId(sessionData.user_id || nextUserId);
+    passwordUserInput.value = userId;
+    localStorage.setItem(userIdKey, userId);
+    passwordInput.value = "";
+    passwordError.textContent = "";
+
+    if (userChanged) {
+      threadId = localStorage.getItem(threadStorageKey()) || makeThreadId();
+      localStorage.setItem(threadStorageKey(), threadId);
+      threadInput.value = threadId;
+      messages.innerHTML = "";
+      addMessage("assistant", `已切換使用者：${userId}。歷史對話與全域記憶只會顯示此使用者的資料。`);
+    }
+
+    log(`session created; user=${userId}; ttl=${sessionData.expires_in_sec || "?"}s`, "OK");
+    await checkHealth();
+  } catch (err) {
+    clearSessionToken();
+    passwordError.textContent = `登入失敗：${friendlyNetworkError(err)}`;
+    log(`session create failed: ${err.message}`, "FAIL");
+    setUnlocked(false);
+  } finally {
+    passwordButton.disabled = false;
+    passwordButton.textContent = "連線";
   }
-  appPassword = passwordInput.value;
-  localStorage.setItem(passwordKey, appPassword);
-  passwordError.textContent = "";
-  checkHealth();
 });
 
 passwordInput.addEventListener("keydown", (event) => {
