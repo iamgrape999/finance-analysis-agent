@@ -391,59 +391,40 @@ def provider_probe(
 ) -> Dict[str, Any]:
     require_auth(x_app_password, x_user_id)
     provider = provider.strip().lower()
-    previous_nvidia_model = os.environ.get("NVIDIA_MODEL")
-    previous_fireworks_model = os.environ.get("FIREWORKS_MODEL")
-    previous_mistral_model = os.environ.get("MISTRAL_MODEL")
+    active_model = (model or "").strip()
     try:
         if provider == "nvidia":
-            selected_model = (model or os.environ.get("NVIDIA_MODEL") or NVIDIA_MODEL).strip()
-            if selected_model:
-                os.environ["NVIDIA_MODEL"] = selected_model
-            reply = call_nvidia("請只回覆 OK。", max_tokens=64, temperature=0.0)
-            return {"ok": True, "provider": "nvidia", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
+            active_model = active_model or NVIDIA_MODEL
+            reply = call_nvidia("請只回覆 OK。", max_tokens=64, temperature=0.0, model_override=active_model)
+            return {
+                "ok": True,
+                "provider": "nvidia",
+                "model": reply.meta.get("model"),
+                "requested_model": reply.meta.get("requested_model", active_model),
+                "reply": reply.text,
+                "usage": reply.meta.get("usage") or {},
+            }
 
         if provider == "fireworks":
-            selected_model = model
+            selected_model = active_model
             if selected_model == "auto":
                 selected_model = first_fireworks_serverless_model()
                 if not selected_model:
                     return {"ok": False, "provider": "fireworks", "model": "auto", "error": "No Fireworks serverless models returned by /api/provider-models/fireworks."}
-            if selected_model:
-                os.environ["FIREWORKS_MODEL"] = selected_model
-            reply = call_fireworks("請只回覆 OK。", max_tokens=64, temperature=0.0)
+            active_model = selected_model or FIREWORKS_MODEL
+            reply = call_fireworks("請只回覆 OK。", max_tokens=64, temperature=0.0, model_override=active_model)
             return {"ok": True, "provider": "fireworks", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
 
         if provider == "mistral":
-            selected_model = (model or os.environ.get("MISTRAL_MODEL") or MISTRAL_MODEL).strip()
-            if selected_model:
-                os.environ["MISTRAL_MODEL"] = selected_model
-            reply = call_mistral("請只回覆 OK。", max_tokens=64, temperature=0.0)
+            active_model = active_model or MISTRAL_MODEL
+            reply = call_mistral("請只回覆 OK。", max_tokens=64, temperature=0.0, model_override=active_model)
             return {"ok": True, "provider": "mistral", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
 
         raise HTTPException(status_code=400, detail="Only nvidia, fireworks and mistral probes are implemented.")
     except HTTPException:
         raise
     except Exception as exc:
-        active_model = (
-            model
-            or (os.environ.get("NVIDIA_MODEL") if provider == "nvidia" else None)
-            or (os.environ.get("FIREWORKS_MODEL") if provider == "fireworks" else None)
-            or (os.environ.get("MISTRAL_MODEL") if provider == "mistral" else None)
-        )
         return {"ok": False, "provider": provider, "model": active_model, "error": f"{type(exc).__name__}: {exc}"}
-    finally:
-        if previous_nvidia_model is None:
-            os.environ.pop("NVIDIA_MODEL", None)
-        else:
-            os.environ["NVIDIA_MODEL"] = previous_nvidia_model
-        if previous_fireworks_model is None:
-            os.environ.pop("FIREWORKS_MODEL", None)
-        else:
-            os.environ["FIREWORKS_MODEL"] = previous_fireworks_model
-        if previous_mistral_model is None:
-            os.environ.pop("MISTRAL_MODEL", None)
-        else:
-            os.environ["MISTRAL_MODEL"] = previous_mistral_model
 
 @app.get("/api/provider-models/{provider}")
 def provider_models(
