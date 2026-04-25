@@ -3,10 +3,11 @@
 import os
 import re
 import hmac
+import threading
 import traceback
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -40,6 +41,8 @@ from Finance_Analysis_Agent_V581 import (
 )
 
 
+_ENV_LOCK = threading.Lock()
+
 APP_NAME = os.getenv("APP_NAME", "CathyChang AI")
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
@@ -66,6 +69,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next) -> Response:
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
 
 
 class ChatRequest(BaseModel):
@@ -201,7 +213,11 @@ def health(
 
 
 @app.get("/api/healthz")
-def healthz() -> Dict[str, Any]:
+def healthz(
+    x_app_password: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    require_auth(x_app_password, x_user_id)
     diagnostics = provider_diagnostics()
     return {
         "ok": True,
@@ -243,7 +259,6 @@ def chat(
 
 
 def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) -> ChatResponse:
-    previous_provider_order = os.environ.get("AGENT_PROVIDER_ORDER")
     model_env_keys = {
         "nvidia": "NVIDIA_MODEL",
         "cerebras": "CEREBRAS_MODEL",
@@ -255,61 +270,63 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
         "groq": "GROQ_MODEL",
         "aws": "AWS_BEDROCK_MODEL",
     }
-    previous_models = {env_key: os.environ.get(env_key) for env_key in model_env_keys.values()}
-    try:
-        effective_provider_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
-        if effective_provider_order:
-            os.environ["AGENT_PROVIDER_ORDER"] = effective_provider_order
-        for provider, model in (req.model_overrides or {}).items():
-            env_key = model_env_keys.get(provider)
-            if env_key and model.strip():
-                os.environ[env_key] = model.strip()
-        mode_default_tokens = MODE_DEFAULT_MAX_TOKENS.get(req.response_mode, MODE_DEFAULT_MAX_TOKENS["fast"])
-        effective_max_tokens = int(req.max_tokens or mode_default_tokens)
-        if enforce_min_tokens:
-            effective_max_tokens = max(256, effective_max_tokens)
-        result = chat_once_detailed(
-            memory=None,
-            THREAD_ID=req.thread_id,
-            user_text_or_prompt=req.message,
-            print_reply=False,
-            max_tokens_override=effective_max_tokens,
-            temperature_override=req.temperature,
-            use_history=req.use_history,
-            history_turns=req.history_turns,
-            user_id=user_id,
-            response_mode=req.response_mode,
-            disable_auto_continue=req.disable_auto_continue,
-            web_search_provider_override=req.web_search_provider,
-            force_web_search=req.force_web_search,
-        )
-    except Exception as exc:
-        traceback.print_exc()
-        error_context = {
-            "phase": "chat_once_detailed",
-            "user_id": user_id,
-            "thread_id": req.thread_id,
-            "provider_order": effective_provider_order if 'effective_provider_order' in locals() else resolve_provider_order(),
-            "response_mode": req.response_mode,
-            "disable_auto_continue": req.disable_auto_continue,
-            "model_overrides": list((req.model_overrides or {}).keys()),
-            "web_search_provider": req.web_search_provider,
-            "force_web_search": req.force_web_search,
-        }
-        raise HTTPException(
-            status_code=500,
-            detail=f"{type(exc).__name__}: {exc}; context={error_context}",
-        ) from exc
-    finally:
-        if previous_provider_order is None:
-            os.environ.pop("AGENT_PROVIDER_ORDER", None)
-        else:
-            os.environ["AGENT_PROVIDER_ORDER"] = previous_provider_order
-        for env_key, previous_value in previous_models.items():
-            if previous_value is None:
-                os.environ.pop(env_key, None)
+    effective_provider_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
+    mode_default_tokens = MODE_DEFAULT_MAX_TOKENS.get(req.response_mode, MODE_DEFAULT_MAX_TOKENS["fast"])
+    effective_max_tokens = int(req.max_tokens or mode_default_tokens)
+    if enforce_min_tokens:
+        effective_max_tokens = max(256, effective_max_tokens)
+    with _ENV_LOCK:
+        previous_provider_order = os.environ.get("AGENT_PROVIDER_ORDER")
+        previous_models = {env_key: os.environ.get(env_key) for env_key in model_env_keys.values()}
+        try:
+            if effective_provider_order:
+                os.environ["AGENT_PROVIDER_ORDER"] = effective_provider_order
+            for provider, model in (req.model_overrides or {}).items():
+                env_key = model_env_keys.get(provider)
+                if env_key and model.strip():
+                    os.environ[env_key] = model.strip()
+            result = chat_once_detailed(
+                memory=None,
+                THREAD_ID=req.thread_id,
+                user_text_or_prompt=req.message,
+                print_reply=False,
+                max_tokens_override=effective_max_tokens,
+                temperature_override=req.temperature,
+                use_history=req.use_history,
+                history_turns=req.history_turns,
+                user_id=user_id,
+                response_mode=req.response_mode,
+                disable_auto_continue=req.disable_auto_continue,
+                web_search_provider_override=req.web_search_provider,
+                force_web_search=req.force_web_search,
+            )
+        except Exception as exc:
+            traceback.print_exc()
+            error_context = {
+                "phase": "chat_once_detailed",
+                "user_id": user_id,
+                "thread_id": req.thread_id,
+                "provider_order": effective_provider_order or resolve_provider_order(),
+                "response_mode": req.response_mode,
+                "disable_auto_continue": req.disable_auto_continue,
+                "model_overrides": list((req.model_overrides or {}).keys()),
+                "web_search_provider": req.web_search_provider,
+                "force_web_search": req.force_web_search,
+            }
+            raise HTTPException(
+                status_code=500,
+                detail=f"{type(exc).__name__}: {exc}; context={error_context}",
+            ) from exc
+        finally:
+            if previous_provider_order is None:
+                os.environ.pop("AGENT_PROVIDER_ORDER", None)
             else:
-                os.environ[env_key] = previous_value
+                os.environ["AGENT_PROVIDER_ORDER"] = previous_provider_order
+            for env_key, previous_value in previous_models.items():
+                if previous_value is None:
+                    os.environ.pop(env_key, None)
+                else:
+                    os.environ[env_key] = previous_value
     meta = result.get("meta", {}) if isinstance(result, dict) else {}
     return ChatResponse(
         thread_id=req.thread_id,
@@ -335,10 +352,21 @@ def selftest(
     x_user_id: Optional[str] = Header(default=None),
 ) -> ChatResponse:
     user_id = require_auth(x_app_password, x_user_id)
-    req.message = "SelfTest：請只回覆 OK，並用繁體中文。"
-    req.max_tokens = req.max_tokens or 256
-    req.temperature = 0.0
-    return _chat_impl(req, user_id=user_id, enforce_min_tokens=False)
+    test_req = ChatRequest(
+        thread_id=req.thread_id,
+        message="SelfTest：請只回覆 OK，並用繁體中文。",
+        max_tokens=req.max_tokens or 256,
+        temperature=0.0,
+        use_history=False,
+        history_turns=0,
+        response_mode=req.response_mode,
+        disable_auto_continue=True,
+        provider_order=req.provider_order,
+        model_overrides=req.model_overrides,
+        web_search_provider="auto",
+        force_web_search=False,
+    )
+    return _chat_impl(test_req, user_id=user_id, enforce_min_tokens=False)
 
 
 @app.get("/api/threads/{thread_id}/messages", response_model=List[MessageRecord])
@@ -413,59 +441,60 @@ def provider_probe(
 ) -> Dict[str, Any]:
     require_auth(x_app_password, x_user_id)
     provider = provider.strip().lower()
-    previous_nvidia_model = os.environ.get("NVIDIA_MODEL")
-    previous_fireworks_model = os.environ.get("FIREWORKS_MODEL")
-    previous_mistral_model = os.environ.get("MISTRAL_MODEL")
-    try:
-        if provider == "nvidia":
-            selected_model = (model or os.environ.get("NVIDIA_MODEL") or NVIDIA_MODEL).strip()
-            if selected_model:
-                os.environ["NVIDIA_MODEL"] = selected_model
-            reply = call_nvidia("請只回覆 OK。", max_tokens=64, temperature=0.0)
-            return {"ok": True, "provider": "nvidia", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
+    with _ENV_LOCK:
+        previous_nvidia_model = os.environ.get("NVIDIA_MODEL")
+        previous_fireworks_model = os.environ.get("FIREWORKS_MODEL")
+        previous_mistral_model = os.environ.get("MISTRAL_MODEL")
+        try:
+            if provider == "nvidia":
+                selected_model = (model or os.environ.get("NVIDIA_MODEL") or NVIDIA_MODEL).strip()
+                if selected_model:
+                    os.environ["NVIDIA_MODEL"] = selected_model
+                reply = call_nvidia("請只回覆 OK。", max_tokens=64, temperature=0.0)
+                return {"ok": True, "provider": "nvidia", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
 
-        if provider == "fireworks":
-            selected_model = model
-            if selected_model == "auto":
-                selected_model = first_fireworks_serverless_model()
-                if not selected_model:
-                    return {"ok": False, "provider": "fireworks", "model": "auto", "error": "No Fireworks serverless models returned by /api/provider-models/fireworks."}
-            if selected_model:
-                os.environ["FIREWORKS_MODEL"] = selected_model
-            reply = call_fireworks("請只回覆 OK。", max_tokens=64, temperature=0.0)
-            return {"ok": True, "provider": "fireworks", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
+            if provider == "fireworks":
+                selected_model = model
+                if selected_model == "auto":
+                    selected_model = first_fireworks_serverless_model()
+                    if not selected_model:
+                        return {"ok": False, "provider": "fireworks", "model": "auto", "error": "No Fireworks serverless models returned by /api/provider-models/fireworks."}
+                if selected_model:
+                    os.environ["FIREWORKS_MODEL"] = selected_model
+                reply = call_fireworks("請只回覆 OK。", max_tokens=64, temperature=0.0)
+                return {"ok": True, "provider": "fireworks", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
 
-        if provider == "mistral":
-            selected_model = (model or os.environ.get("MISTRAL_MODEL") or MISTRAL_MODEL).strip()
-            if selected_model:
-                os.environ["MISTRAL_MODEL"] = selected_model
-            reply = call_mistral("請只回覆 OK。", max_tokens=64, temperature=0.0)
-            return {"ok": True, "provider": "mistral", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
+            if provider == "mistral":
+                selected_model = (model or os.environ.get("MISTRAL_MODEL") or MISTRAL_MODEL).strip()
+                if selected_model:
+                    os.environ["MISTRAL_MODEL"] = selected_model
+                reply = call_mistral("請只回覆 OK。", max_tokens=64, temperature=0.0)
+                return {"ok": True, "provider": "mistral", "model": reply.meta.get("model"), "reply": reply.text, "usage": reply.meta.get("usage") or {}}
 
-        raise HTTPException(status_code=400, detail="Only nvidia, fireworks and mistral probes are implemented.")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        active_model = (
-            model
-            or (os.environ.get("NVIDIA_MODEL") if provider == "nvidia" else None)
-            or (os.environ.get("FIREWORKS_MODEL") if provider == "fireworks" else None)
-            or (os.environ.get("MISTRAL_MODEL") if provider == "mistral" else None)
-        )
-        return {"ok": False, "provider": provider, "model": active_model, "error": f"{type(exc).__name__}: {exc}"}
-    finally:
-        if previous_nvidia_model is None:
-            os.environ.pop("NVIDIA_MODEL", None)
-        else:
-            os.environ["NVIDIA_MODEL"] = previous_nvidia_model
-        if previous_fireworks_model is None:
-            os.environ.pop("FIREWORKS_MODEL", None)
-        else:
-            os.environ["FIREWORKS_MODEL"] = previous_fireworks_model
-        if previous_mistral_model is None:
-            os.environ.pop("MISTRAL_MODEL", None)
-        else:
-            os.environ["MISTRAL_MODEL"] = previous_mistral_model
+            raise HTTPException(status_code=400, detail="Only nvidia, fireworks and mistral probes are implemented.")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            active_model = (
+                model
+                or (os.environ.get("NVIDIA_MODEL") if provider == "nvidia" else None)
+                or (os.environ.get("FIREWORKS_MODEL") if provider == "fireworks" else None)
+                or (os.environ.get("MISTRAL_MODEL") if provider == "mistral" else None)
+            )
+            return {"ok": False, "provider": provider, "model": active_model, "error": f"{type(exc).__name__}: {exc}"}
+        finally:
+            if previous_nvidia_model is None:
+                os.environ.pop("NVIDIA_MODEL", None)
+            else:
+                os.environ["NVIDIA_MODEL"] = previous_nvidia_model
+            if previous_fireworks_model is None:
+                os.environ.pop("FIREWORKS_MODEL", None)
+            else:
+                os.environ["FIREWORKS_MODEL"] = previous_fireworks_model
+            if previous_mistral_model is None:
+                os.environ.pop("MISTRAL_MODEL", None)
+            else:
+                os.environ["MISTRAL_MODEL"] = previous_mistral_model
 
 @app.get("/api/provider-models/{provider}")
 def provider_models(

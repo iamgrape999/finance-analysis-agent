@@ -101,7 +101,7 @@ apiBaseInput.value = localStorage.getItem(apiBaseKey) || "";
 passwordApiBaseInput.value = apiBaseInput.value;
 let providerReadiness = {};
 let modelDefaults = {};
-let appPassword = localStorage.getItem(passwordKey) || "";
+let appPassword = sessionStorage.getItem(passwordKey) || "";
 responseModeInput.value = localStorage.getItem(responseModeKey) || "fast";
 let webSearchProviderMode = localStorage.getItem(webSearchProviderKey) || "auto";
 forceWebSearchInput.checked = localStorage.getItem(forceWebSearchKey) === "true";
@@ -1019,6 +1019,11 @@ window.addEventListener("resize", () => {
   lastMobileLayoutState = nowMobile;
   applyResponsePreset(false);
   log(`layout changed: ${nowMobile ? "mobile" : "desktop"}; provider_order=${providerOrderInput.value || "backend"}`, "DEBUG");
+  if (nowMobile) {
+    mainWorkspace.classList.add("sidebar-collapsed");
+    mainWorkspace.classList.remove("settings-open");
+    logPanel.classList.remove("is-open");
+  }
 });
 
 selfTestButton.addEventListener("click", async () => {
@@ -1100,7 +1105,7 @@ passwordButton.addEventListener("click", () => {
     addMessage("assistant", `已切換使用者：${userId}。歷史對話與全域記憶只會顯示此使用者的資料。`);
   }
   appPassword = passwordInput.value;
-  localStorage.setItem(passwordKey, appPassword);
+  sessionStorage.setItem(passwordKey, appPassword);
   passwordError.textContent = "";
   checkHealth();
 });
@@ -1126,13 +1131,6 @@ applyResponsePreset(false);
 if (isMobileLayout()) {
   mainWorkspace.classList.add("sidebar-collapsed");
 }
-window.addEventListener("resize", () => {
-  if (isMobileLayout()) {
-    mainWorkspace.classList.add("sidebar-collapsed");
-    mainWorkspace.classList.remove("settings-open");
-    logPanel.classList.remove("is-open");
-  }
-});
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   if (!themeMode) {
     applyTheme();

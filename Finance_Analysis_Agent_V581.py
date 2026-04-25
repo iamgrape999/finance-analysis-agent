@@ -134,7 +134,7 @@ PROVIDER_READ_TIMEOUTS = {
     "aws": int(os.getenv("AWS_TIMEOUT_SEC", str(DEFAULT_PROVIDER_TIMEOUT_SEC))),
     "default": DEFAULT_PROVIDER_TIMEOUT_SEC,
 }
-TOKEN_EST_RATIO = float(os.getenv("TOKEN_EST_RATIO", "0.5"))
+TOKEN_EST_RATIO = float(os.getenv("TOKEN_EST_RATIO", "1.0"))
 MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "9000"))
 MAX_USER_MESSAGE_CHARS = int(os.getenv("MAX_USER_MESSAGE_CHARS", "20000"))
 MAX_HISTORY_TURN_CHARS = int(os.getenv("MAX_HISTORY_TURN_CHARS", "800"))
@@ -258,9 +258,10 @@ def _lock_path(path: str) -> str:
     return path + ".lock"
 
 
-def _acquire_lock(path: str, ttl_sec: int = 120) -> str:
+def _acquire_lock(path: str, ttl_sec: int = 120, max_wait_sec: float = 60.0) -> str:
     lock = _lock_path(path)
     payload = {"pid": os.getpid(), "ts": time.time(), "path": path}
+    deadline = time.monotonic() + max_wait_sec
     while True:
         try:
             if os.path.exists(lock) and time.time() - os.path.getmtime(lock) > ttl_sec:
@@ -274,6 +275,8 @@ def _acquire_lock(path: str, ttl_sec: int = 120) -> str:
                 json.dump(payload, f, ensure_ascii=False)
             return lock
         except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Could not acquire lock on {path} within {max_wait_sec}s")
             time.sleep(0.05)
 
 
@@ -1887,45 +1890,6 @@ def route_generate(
             "disable_auto_continue": disable_auto_continue,
         },
     )
-
-
-def _build_context_legacy(
-    adapter: MemoryAdapter,
-    user_text: str,
-    history_turns: int,
-    use_history: bool,
-    use_summary: bool,
-    user_id: Optional[str] = None,
-) -> str:
-    blocks: List[str] = []
-    global_facts = load_global_facts(user_id)
-    if global_facts:
-        lines = []
-        for key in sorted(global_facts.keys()):
-            value = global_facts[key]
-            if isinstance(value, dict):
-                lines.append(f"{key}={value.get('value', '')}")
-            else:
-                lines.append(f"{key}={value}")
-        if lines:
-            blocks.append("[全域記憶]\n" + "\n".join(lines))
-    if use_summary:
-        summary = adapter.load_summary()
-        if summary:
-            blocks.append("[對話摘要]\n" + summary[:2000])
-    if use_history:
-        turns = adapter.get_recent_turns(history_turns)
-        if turns:
-            lines = []
-            for turn in turns:
-                role = str(turn.get("role", "")).upper()
-                content = str(turn.get("content", ""))[:1200]
-                if role and content:
-                    lines.append(f"{role}: {content}")
-            if lines:
-                blocks.append("[最近對話]\n" + "\n".join(lines))
-    blocks.append("[本輪使用者問題]\n" + user_text)
-    return "\n\n".join(blocks)
 
 
 def _build_context(
