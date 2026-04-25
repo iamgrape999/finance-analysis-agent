@@ -744,19 +744,50 @@ def _call_provider_once(
     temperature: float,
     provider_profile: Optional[Dict[str, Any]] = None,
     timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
 ) -> Optional[ModelReply]:
     effective_max_tokens = min(int(max_tokens), int((provider_profile or {}).get("max_tokens", max_tokens)))
     effective_system_policy = str((provider_profile or {}).get("system_policy", SYSTEM_POLICY))
     if provider == "openrouter":
-        return call_openrouter(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+        return call_openrouter(
+            prompt,
+            max_tokens=effective_max_tokens,
+            temperature=temperature,
+            timeout_override=timeout_override,
+            model_override=model_override,
+        )
     if provider == "nvidia":
-        return call_nvidia(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+        return call_nvidia(
+            prompt,
+            max_tokens=effective_max_tokens,
+            temperature=temperature,
+            timeout_override=timeout_override,
+            model_override=model_override,
+        )
     if provider == "cerebras":
-        return call_cerebras(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+        return call_cerebras(
+            prompt,
+            max_tokens=effective_max_tokens,
+            temperature=temperature,
+            timeout_override=timeout_override,
+            model_override=model_override,
+        )
     if provider == "mistral":
-        return call_mistral(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+        return call_mistral(
+            prompt,
+            max_tokens=effective_max_tokens,
+            temperature=temperature,
+            timeout_override=timeout_override,
+            model_override=model_override,
+        )
     if provider == "gemini":
-        return call_gemini(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+        return call_gemini(
+            prompt,
+            max_tokens=effective_max_tokens,
+            temperature=temperature,
+            timeout_override=timeout_override,
+            model_override=model_override,
+        )
     if provider == "cloudflare":
         return call_cloudflare(
             prompt,
@@ -764,6 +795,7 @@ def _call_provider_once(
             temperature=temperature,
             system_policy=effective_system_policy,
             timeout_override=timeout_override,
+            model_override=model_override,
         )
     if provider == "groq":
         return call_groq(
@@ -772,11 +804,24 @@ def _call_provider_once(
             temperature=temperature,
             system_policy=effective_system_policy,
             timeout_override=timeout_override,
+            model_override=model_override,
         )
     if provider == "fireworks":
-        return call_fireworks(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+        return call_fireworks(
+            prompt,
+            max_tokens=effective_max_tokens,
+            temperature=temperature,
+            timeout_override=timeout_override,
+            model_override=model_override,
+        )
     if provider == "aws":
-        return call_aws(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
+        return call_aws(
+            prompt,
+            max_tokens=effective_max_tokens,
+            temperature=temperature,
+            timeout_override=timeout_override,
+            model_override=model_override,
+        )
     return None
 
 
@@ -1007,9 +1052,9 @@ def provider_diagnostics() -> Dict[str, Any]:
     return diag
 
 
-def resolve_provider_order() -> List[str]:
+def resolve_provider_order(provider_order_override: Optional[str] = None) -> List[str]:
     ready = provider_readiness()
-    provider_order = os.getenv("AGENT_PROVIDER_ORDER", AGENT_PROVIDER_ORDER)
+    provider_order = (provider_order_override or os.getenv("AGENT_PROVIDER_ORDER", AGENT_PROVIDER_ORDER) or "").strip()
     provider_disable = os.getenv("AGENT_PROVIDER_DISABLE", AGENT_PROVIDER_DISABLE).lower()
     disabled = {p.strip() for p in provider_disable.split(",") if p.strip()}
     out: List[str] = []
@@ -1248,8 +1293,14 @@ def _resolve_nvidia_model(model: Optional[str] = None) -> str:
     return NVIDIA_MODEL_ALIASES.get(requested, requested)
 
 
-def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL).strip() or OPENROUTER_MODEL
+def call_openrouter(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
+) -> ModelReply:
+    model = str(model_override or os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL)).strip() or OPENROUTER_MODEL
     url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1") + "/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -1281,8 +1332,14 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_ov
     return ModelReply(text=text, meta={"provider": "openrouter", "model": data.get("model", model), "usage": data.get("usage")})
 
 
-def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    requested_model = (os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL)
+def call_nvidia(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
+) -> ModelReply:
+    requested_model = str(model_override or os.getenv("NVIDIA_MODEL", NVIDIA_MODEL)).strip() or NVIDIA_MODEL
     model = _resolve_nvidia_model(requested_model)
     url = os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL
     headers = {
@@ -1349,9 +1406,15 @@ def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_overri
     )
 
 
-def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+def call_cerebras(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
+) -> ModelReply:
     del timeout_override
-    requested_model = os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL).strip() or CEREBRAS_MODEL
+    requested_model = str(model_override or os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL)).strip() or CEREBRAS_MODEL
     model = CEREBRAS_MODEL_ALIASES.get(requested_model, requested_model)
     try:
         from cerebras.cloud.sdk import Cerebras  # type: ignore
@@ -1399,8 +1462,14 @@ def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_over
     )
 
 
-def call_mistral(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = os.getenv("MISTRAL_MODEL", MISTRAL_MODEL).strip() or MISTRAL_MODEL
+def call_mistral(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
+) -> ModelReply:
+    model = str(model_override or os.getenv("MISTRAL_MODEL", MISTRAL_MODEL)).strip() or MISTRAL_MODEL
     url = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1/chat/completions").strip()
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -1454,8 +1523,9 @@ def call_groq(
     temperature: float,
     system_policy: str = SYSTEM_POLICY,
     timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
 ) -> ModelReply:
-    model = os.getenv("GROQ_MODEL", GROQ_MODEL).strip() or GROQ_MODEL
+    model = str(model_override or os.getenv("GROQ_MODEL", GROQ_MODEL)).strip() or GROQ_MODEL
     url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     payload = {
@@ -1477,8 +1547,14 @@ def call_groq(
     return ModelReply(text=text, meta={"provider": "groq", "model": model, "usage": data.get("usage")})
 
 
-def call_fireworks(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = os.getenv("FIREWORKS_MODEL", FIREWORKS_MODEL).strip() or FIREWORKS_MODEL
+def call_fireworks(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
+) -> ModelReply:
+    model = str(model_override or os.getenv("FIREWORKS_MODEL", FIREWORKS_MODEL)).strip() or FIREWORKS_MODEL
     base_url = os.getenv("FIREWORKS_BASE_URL", FIREWORKS_BASE_URL).rstrip("/")
     url = f"{base_url}/chat/completions"
     headers = {"Authorization": f"Bearer {FIREWORKS_API_KEY}", "Content-Type": "application/json"}
@@ -1561,8 +1637,9 @@ def call_cloudflare(
     temperature: float,
     system_policy: str = SYSTEM_POLICY,
     timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
 ) -> ModelReply:
-    model = os.getenv("CF_MODEL", CF_MODEL).strip() or CF_MODEL
+    model = str(model_override or os.getenv("CF_MODEL", CF_MODEL)).strip() or CF_MODEL
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
     payload = {
@@ -1587,9 +1664,15 @@ def call_cloudflare(
     return ModelReply(text=str(text).strip(), meta={"provider": "cloudflare", "model": model, "usage": usage})
 
 
-def call_gemini(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+def call_gemini(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
+) -> ModelReply:
     del timeout_override
-    model = os.getenv("GEMINI_MODEL", GEMINI_MODEL).strip() or GEMINI_MODEL
+    model = str(model_override or os.getenv("GEMINI_MODEL", GEMINI_MODEL)).strip() or GEMINI_MODEL
     try:
         from google import genai  # type: ignore
         from google.genai import types  # type: ignore
@@ -1619,8 +1702,14 @@ def call_gemini(prompt: str, max_tokens: int, temperature: float, timeout_overri
     return ModelReply(text=text.strip(), meta={"provider": "gemini", "model": model, "usage": usage})
 
 
-def call_aws(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = os.getenv("AWS_BEDROCK_MODEL", AWS_BEDROCK_MODEL).strip() or AWS_BEDROCK_MODEL
+def call_aws(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_override: Optional[float] = None,
+    model_override: Optional[str] = None,
+) -> ModelReply:
+    model = str(model_override or os.getenv("AWS_BEDROCK_MODEL", AWS_BEDROCK_MODEL)).strip() or AWS_BEDROCK_MODEL
     try:
         import boto3  # type: ignore
         import botocore  # type: ignore
@@ -1666,10 +1755,13 @@ def route_generate(
     temperature: float = 0.2,
     response_mode: str = "fast",
     disable_auto_continue: bool = False,
+    provider_order_override: Optional[str] = None,
+    provider_models_override: Optional[Dict[str, str]] = None,
 ) -> ModelReply:
-    providers = resolve_provider_order()
+    providers = resolve_provider_order(provider_order_override)
     if not providers:
         return ModelReply(local_fallback_generate(str(prompt or "")), {"provider": "local_fallback"})
+    provider_models_override = dict(provider_models_override or {})
 
     if isinstance(prompt, dict):
         prompt_bundle = {
@@ -1708,7 +1800,8 @@ def route_generate(
         try:
             remaining_budget_sec = max(3.0, route_timeout_sec - (time.perf_counter() - route_started))
             effective_attempt_timeout_sec = min(remaining_budget_sec, float(per_attempt_timeout_sec))
-            if provider == "nvidia" and _resolve_nvidia_model() == NVIDIA_NEMOTRON_SUPER_MODEL:
+            current_nvidia_model = provider_models_override.get("nvidia") or os.getenv("NVIDIA_MODEL", NVIDIA_MODEL)
+            if provider == "nvidia" and _resolve_nvidia_model(current_nvidia_model) == NVIDIA_NEMOTRON_SUPER_MODEL:
                 effective_attempt_timeout_sec = min(remaining_budget_sec, 30.0)
             context_kind = "light" if provider in {"groq", "cloudflare"} else "heavy"
             provider_prompt = prompt_bundle[context_kind]
@@ -1766,6 +1859,7 @@ def route_generate(
                 temperature=temperature,
                 provider_profile=provider_profile,
                 timeout_override=effective_attempt_timeout_sec,
+                model_override=provider_models_override.get(provider),
             )
             trace["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
             trace["status"] = "ok"
@@ -1814,6 +1908,7 @@ def route_generate(
                         temperature=temperature,
                         provider_profile=provider_profile,
                         timeout_override=continue_attempt_timeout_sec,
+                        model_override=provider_models_override.get(provider),
                     )
                     continue_trace["elapsed_ms"] = round((time.perf_counter() - continue_started) * 1000, 1)
                     continue_trace["status"] = "ok" if continuation and strip_redundant(continuation.text) else "error"
@@ -2147,6 +2242,8 @@ def chat_once_detailed(
     disable_auto_continue: bool = False,
     web_search_provider_override: Optional[str] = None,
     force_web_search: bool = False,
+    provider_order_override: Optional[str] = None,
+    provider_models_override: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     del min_tokens, summary_chars
     user_text = strip_redundant(user_text_or_prompt)
@@ -2223,6 +2320,8 @@ def chat_once_detailed(
         temperature=float(temperature_override if temperature_override is not None else 0.2),
         response_mode=response_mode,
         disable_auto_continue=disable_auto_continue,
+        provider_order_override=provider_order_override,
+        provider_models_override=provider_models_override,
     )
     latency_s = round(time.perf_counter() - t0, 3)
     assistant_text = strip_redundant(clean_model_output(reply.text))
