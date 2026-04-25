@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import app
 import Finance_Analysis_Agent_V581 as agent
+from fastapi.testclient import TestClient
 
 
 class MemoryIsolationTests(unittest.TestCase):
@@ -84,6 +85,92 @@ class ProviderOverrideTests(unittest.TestCase):
             {"mistral": "mistral-small-latest", "openrouter": "meta-llama/test"},
         )
         self.assertEqual(kwargs["user_id"], "hanli")
+
+
+class SessionAuthApiTests(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app.app)
+        self.old_app_password = app.APP_PASSWORD
+        self.old_app_users_raw = app.APP_USERS_RAW
+        self.old_session_secret = app.SESSION_SECRET
+        self.old_session_ttl = app.SESSION_TTL_SEC
+        self.old_rate_limit_enabled = app.RATE_LIMIT_ENABLED
+        app.APP_PASSWORD = "shared-secret"
+        app.APP_USERS_RAW = ""
+        app.SESSION_SECRET = "test-session-secret"
+        app.SESSION_TTL_SEC = 3600
+        app.RATE_LIMIT_ENABLED = False
+        app._RATE_LIMIT_BUCKETS.clear()
+
+    def tearDown(self):
+        app.APP_PASSWORD = self.old_app_password
+        app.APP_USERS_RAW = self.old_app_users_raw
+        app.SESSION_SECRET = self.old_session_secret
+        app.SESSION_TTL_SEC = self.old_session_ttl
+        app.RATE_LIMIT_ENABLED = self.old_rate_limit_enabled
+        app._RATE_LIMIT_BUCKETS.clear()
+
+    def test_session_login_returns_token_and_health_accepts_it(self):
+        response = self.client.post(
+            "/api/session",
+            json={"user_id": "hanli", "password": "shared-secret"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["user_id"], "hanli")
+        self.assertTrue(data["session_token"])
+        self.assertEqual(data["expires_in_sec"], 3600)
+
+        health = self.client.get(
+            "/api/health",
+            headers={
+                "X-User-Id": "hanli",
+                "X-Session-Token": data["session_token"],
+            },
+        )
+        self.assertEqual(health.status_code, 200)
+        health_data = health.json()
+        self.assertEqual(health_data["user_id"], "hanli")
+        self.assertTrue(health_data["session_auth_enabled"])
+        self.assertEqual(health_data["session_ttl_sec"], 3600)
+
+    def test_session_token_rejects_wrong_user_header(self):
+        response = self.client.post(
+            "/api/session",
+            json={"user_id": "hanli", "password": "shared-secret"},
+        )
+        token = response.json()["session_token"]
+
+        health = self.client.get(
+            "/api/health",
+            headers={
+                "X-User-Id": "cathy",
+                "X-Session-Token": token,
+            },
+        )
+        self.assertEqual(health.status_code, 401)
+        self.assertIn("mismatch", health.json()["detail"].lower())
+
+    def test_expired_session_token_is_rejected(self):
+        original_time = app.time.time
+        try:
+            app.time.time = lambda: 1_000_000
+            token = app.create_session_token("hanli")
+            app.time.time = lambda: 1_000_000 + 3601
+
+            health = self.client.get(
+                "/api/health",
+                headers={
+                    "X-User-Id": "hanli",
+                    "X-Session-Token": token,
+                },
+            )
+        finally:
+            app.time.time = original_time
+
+        self.assertEqual(health.status_code, 401)
+        self.assertIn("expired", health.json()["detail"].lower())
 
 
 class SearchClassifierTests(unittest.TestCase):
