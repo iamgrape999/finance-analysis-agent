@@ -2177,6 +2177,14 @@ def chat_once_detailed(
     if not user_text:
         return {"reply": "請輸入問題。", "meta": {"provider": "local"}}
 
+    _MODE_HINTS: Dict[str, str] = {
+        "fast": "（請簡潔回答，150字以內，重點條列）",
+        "stable": "",
+        "deep": "（請深入詳細分析，盡量完整，可分段說明）",
+    }
+    mode_hint = _MODE_HINTS.get(response_mode, "")
+    prompt_user_text = f"{user_text}{mode_hint}" if mode_hint else user_text
+
     adapter = MemoryAdapter(memory=memory, THREAD_ID=THREAD_ID or "WEB_DEFAULT", USER_ID=user_id)
     search_decision = search_intent_classifier(user_text)
     if force_web_search and search_decision.get("priority") != "explicit":
@@ -2217,7 +2225,7 @@ def chat_once_detailed(
             debug_log("web_search", web_search_meta["error"])
     heavy_prompt = _build_context_variant(
         adapter,
-        user_text,
+        prompt_user_text,
         history_turns=history_turns,
         use_history=use_history,
         use_summary=use_summary,
@@ -2226,7 +2234,7 @@ def chat_once_detailed(
     )
     light_prompt = _build_light_context(
         adapter,
-        user_text,
+        prompt_user_text,
         use_summary=use_summary,
         user_id=user_id,
         external_context=external_context,
