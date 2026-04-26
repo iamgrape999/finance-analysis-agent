@@ -14,11 +14,13 @@ under MEMORY_ROOT so Render can mount a persistent disk there.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -223,6 +225,22 @@ SYSTEM_POLICY = (
     "回答要清楚、友善、具體；資料不足時請明確說明，不要編造。"
     "不要輸出內部推理過程、<think> 標籤或隱藏思考內容。"
 )
+
+_CALL_CONTEXT: threading.local = threading.local()
+
+
+def _run_with_timeout(fn: Any, timeout_sec: float) -> Any:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fn)
+        try:
+            return future.result(timeout=max(1.0, float(timeout_sec)))
+        except concurrent.futures.TimeoutError:
+            raise RuntimeError(f"Call timed out after {timeout_sec:.0f}s")
+
+
+def _ctx_model(provider_key: str, env_key: str, default_val: str) -> str:
+    overrides = getattr(_CALL_CONTEXT, "model_overrides", {}) or {}
+    return overrides.get(provider_key) or os.getenv(env_key, default_val).strip() or default_val
 
 
 @dataclass
@@ -911,7 +929,7 @@ def upsert_global_facts_from_text(text: str, user_id: Optional[str] = None) -> D
     facts = load_global_facts(user_id)
     now = datetime.now().isoformat()
     for key, value in re.findall(r"([A-Za-z][A-Za-z0-9_.-]{1,79})\s*=\s*([^\s,;，；。]+)", t):
-        facts[key] = {"value": value.strip(), "ts": now}
+        facts[key] = {"value": value.strip()[:500], "ts": now}
     return save_global_facts(facts, user_id)
 
 
@@ -927,15 +945,42 @@ def list_thread_summaries(user_id: Optional[str] = None) -> List[Dict[str, Any]]
         chat_path = os.path.join(thread_dir, CHAT_FILENAME)
         if not os.path.isdir(thread_dir) or not os.path.exists(chat_path):
             continue
-        rows = MemoryAdapter(memory=None, THREAD_ID=name, USER_ID=user_id).load_chat_raw()
-        if not rows:
+        try:
+            with open(chat_path, "rb") as _fh:
+                _fh.seek(0, 2)
+                size = _fh.tell()
+                _fh.seek(max(0, size - 8192))
+                tail_bytes = _fh.read()
+        except OSError:
             continue
-        preview = ""
-        for row in rows:
-            if row.get("role") == "user" and row.get("content"):
-                preview = strip_redundant(str(row.get("content", "")))[:120]
+        tail_lines = [ln for ln in tail_bytes.decode("utf-8", errors="replace").splitlines() if ln.strip()]
+        if not tail_lines:
+            continue
+        last_row: Dict[str, Any] = {}
+        for ln in reversed(tail_lines):
+            try:
+                last_row = json.loads(ln)
                 break
-        updated_at = rows[-1].get("ts", "")
+            except Exception:
+                pass
+        preview = ""
+        try:
+            with open(chat_path, "r", encoding="utf-8", errors="replace") as _fh2:
+                for ln in _fh2:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        row = json.loads(ln)
+                    except Exception:
+                        continue
+                    if row.get("role") == "user" and row.get("content"):
+                        preview = strip_redundant(str(row["content"]))[:120]
+                        break
+        except OSError:
+            pass
+        message_count = sum(1 for ln in tail_lines if ln.strip())
+        updated_at = last_row.get("ts", "")
         try:
             mtime = os.path.getmtime(chat_path)
         except Exception:
@@ -943,7 +988,7 @@ def list_thread_summaries(user_id: Optional[str] = None) -> List[Dict[str, Any]]
         out.append({
             "thread_id": name,
             "updated_at": updated_at,
-            "message_count": len(rows),
+            "message_count": message_count,
             "preview": preview or name,
             "mtime": mtime,
         })
@@ -1012,7 +1057,10 @@ def provider_diagnostics() -> Dict[str, Any]:
 
 def resolve_provider_order() -> List[str]:
     ready = provider_readiness()
-    provider_order = os.getenv("AGENT_PROVIDER_ORDER", AGENT_PROVIDER_ORDER)
+    provider_order = (
+        getattr(_CALL_CONTEXT, "provider_order_override", None)
+        or os.getenv("AGENT_PROVIDER_ORDER", AGENT_PROVIDER_ORDER)
+    )
     provider_disable = os.getenv("AGENT_PROVIDER_DISABLE", AGENT_PROVIDER_DISABLE).lower()
     disabled = {p.strip() for p in provider_disable.split(",") if p.strip()}
     out: List[str] = []
@@ -1252,7 +1300,7 @@ def _resolve_nvidia_model(model: Optional[str] = None) -> str:
 
 
 def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL).strip() or OPENROUTER_MODEL
+    model = _ctx_model("openrouter", "OPENROUTER_MODEL", OPENROUTER_MODEL)
     url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1") + "/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -1285,7 +1333,7 @@ def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_ov
 
 
 def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    requested_model = (os.getenv("NVIDIA_MODEL", NVIDIA_MODEL).strip() or NVIDIA_MODEL)
+    requested_model = _ctx_model("nvidia", "NVIDIA_MODEL", NVIDIA_MODEL)
     model = _resolve_nvidia_model(requested_model)
     url = os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL
     headers = {
@@ -1353,8 +1401,8 @@ def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_overri
 
 
 def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    del timeout_override
-    requested_model = os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL).strip() or CEREBRAS_MODEL
+    timeout_sec = _effective_timeout("cerebras", timeout_override)
+    requested_model = _ctx_model("cerebras", "CEREBRAS_MODEL", CEREBRAS_MODEL)
     model = CEREBRAS_MODEL_ALIASES.get(requested_model, requested_model)
     try:
         from cerebras.cloud.sdk import Cerebras  # type: ignore
@@ -1362,17 +1410,21 @@ def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_over
         raise RuntimeError("cerebras-cloud-sdk is not installed") from exc
 
     client = Cerebras(api_key=CEREBRAS_API_KEY)
-    completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": SYSTEM_POLICY},
-            {"role": "user", "content": prompt},
-        ],
-        model=model,
-        max_completion_tokens=int(max_tokens),
-        temperature=float(temperature),
-        top_p=1,
-        stream=False,
-    )
+
+    def _do_call() -> Any:
+        return client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": SYSTEM_POLICY},
+                {"role": "user", "content": prompt},
+            ],
+            model=model,
+            max_completion_tokens=int(max_tokens),
+            temperature=float(temperature),
+            top_p=1,
+            stream=False,
+        )
+
+    completion = _run_with_timeout(_do_call, timeout_sec)
     choices = getattr(completion, "choices", None) or []
     text = ""
     if choices:
@@ -1403,7 +1455,7 @@ def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_over
 
 
 def call_mistral(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = os.getenv("MISTRAL_MODEL", MISTRAL_MODEL).strip() or MISTRAL_MODEL
+    model = _ctx_model("mistral", "MISTRAL_MODEL", MISTRAL_MODEL)
     url = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1/chat/completions").strip()
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -1458,7 +1510,7 @@ def call_groq(
     system_policy: str = SYSTEM_POLICY,
     timeout_override: Optional[float] = None,
 ) -> ModelReply:
-    model = os.getenv("GROQ_MODEL", GROQ_MODEL).strip() or GROQ_MODEL
+    model = _ctx_model("groq", "GROQ_MODEL", GROQ_MODEL)
     url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     payload = {
@@ -1481,7 +1533,7 @@ def call_groq(
 
 
 def call_fireworks(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = os.getenv("FIREWORKS_MODEL", FIREWORKS_MODEL).strip() or FIREWORKS_MODEL
+    model = _ctx_model("fireworks", "FIREWORKS_MODEL", FIREWORKS_MODEL)
     base_url = os.getenv("FIREWORKS_BASE_URL", FIREWORKS_BASE_URL).rstrip("/")
     url = f"{base_url}/chat/completions"
     headers = {"Authorization": f"Bearer {FIREWORKS_API_KEY}", "Content-Type": "application/json"}
@@ -1565,7 +1617,7 @@ def call_cloudflare(
     system_policy: str = SYSTEM_POLICY,
     timeout_override: Optional[float] = None,
 ) -> ModelReply:
-    model = os.getenv("CF_MODEL", CF_MODEL).strip() or CF_MODEL
+    model = _ctx_model("cloudflare", "CF_MODEL", CF_MODEL)
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
     payload = {
@@ -1591,8 +1643,8 @@ def call_cloudflare(
 
 
 def call_gemini(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    del timeout_override
-    model = os.getenv("GEMINI_MODEL", GEMINI_MODEL).strip() or GEMINI_MODEL
+    timeout_sec = _effective_timeout("gemini", timeout_override)
+    model = _ctx_model("gemini", "GEMINI_MODEL", GEMINI_MODEL)
     try:
         from google import genai  # type: ignore
         from google.genai import types  # type: ignore
@@ -1600,15 +1652,19 @@ def call_gemini(prompt: str, max_tokens: int, temperature: float, timeout_overri
         raise RuntimeError("google-genai is not installed") from exc
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_POLICY,
-            max_output_tokens=int(max_tokens),
-            temperature=float(temperature),
-        ),
-    )
+
+    def _do_call() -> Any:
+        return client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_POLICY,
+                max_output_tokens=int(max_tokens),
+                temperature=float(temperature),
+            ),
+        )
+
+    response = _run_with_timeout(_do_call, timeout_sec)
     text = getattr(response, "text", "") or ""
     if not text:
         raise RuntimeError("Gemini returned empty content")
@@ -1623,7 +1679,7 @@ def call_gemini(prompt: str, max_tokens: int, temperature: float, timeout_overri
 
 
 def call_aws(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
-    model = os.getenv("AWS_BEDROCK_MODEL", AWS_BEDROCK_MODEL).strip() or AWS_BEDROCK_MODEL
+    model = _ctx_model("aws", "AWS_BEDROCK_MODEL", AWS_BEDROCK_MODEL)
     try:
         import boto3  # type: ignore
         import botocore  # type: ignore
@@ -2111,8 +2167,12 @@ def chat_once_detailed(
     disable_auto_continue: bool = False,
     web_search_provider_override: Optional[str] = None,
     force_web_search: bool = False,
+    model_overrides: Optional[Dict[str, str]] = None,
+    provider_order_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     del min_tokens, summary_chars
+    _CALL_CONTEXT.model_overrides = {k: v.strip() for k, v in (model_overrides or {}).items() if v and v.strip()}
+    _CALL_CONTEXT.provider_order_override = (provider_order_override or "").strip() or None
     user_text = strip_redundant(user_text_or_prompt)
     if not user_text:
         return {"reply": "請輸入問題。", "meta": {"provider": "local"}}
@@ -2181,13 +2241,17 @@ def chat_once_detailed(
     except Exception as exc:
         debug_log("memory", f"failed to persist user turn: {type(exc).__name__}: {exc}")
     t0 = time.perf_counter()
-    reply = route_generate(
-        {"heavy": mask_pii(heavy_prompt), "light": mask_pii(light_prompt)},
-        max_tokens=int(max_tokens_override or MAX_OUTPUT_TOKENS),
-        temperature=float(temperature_override if temperature_override is not None else 0.2),
-        response_mode=response_mode,
-        disable_auto_continue=disable_auto_continue,
-    )
+    try:
+        reply = route_generate(
+            {"heavy": mask_pii(heavy_prompt), "light": mask_pii(light_prompt)},
+            max_tokens=int(max_tokens_override or MAX_OUTPUT_TOKENS),
+            temperature=float(temperature_override if temperature_override is not None else 0.2),
+            response_mode=response_mode,
+            disable_auto_continue=disable_auto_continue,
+        )
+    finally:
+        _CALL_CONTEXT.model_overrides = None
+        _CALL_CONTEXT.provider_order_override = None
     latency_s = round(time.perf_counter() - t0, 3)
     assistant_text = strip_redundant(clean_model_output(reply.text))
     meta = dict(reply.meta or {})

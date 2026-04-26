@@ -71,6 +71,17 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def _startup_warning() -> None:
+    import warnings
+    if not APP_PASSWORD and not APP_USERS_RAW:
+        warnings.warn(
+            "SECURITY: Neither APP_PASSWORD nor APP_USERS is set. "
+            "The API is accessible without authentication.",
+            stacklevel=1,
+        )
+
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next) -> Response:
     response = await call_next(request)
@@ -259,74 +270,46 @@ def chat(
 
 
 def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) -> ChatResponse:
-    model_env_keys = {
-        "nvidia": "NVIDIA_MODEL",
-        "cerebras": "CEREBRAS_MODEL",
-        "mistral": "MISTRAL_MODEL",
-        "openrouter": "OPENROUTER_MODEL",
-        "fireworks": "FIREWORKS_MODEL",
-        "gemini": "GEMINI_MODEL",
-        "cloudflare": "CF_MODEL",
-        "groq": "GROQ_MODEL",
-        "aws": "AWS_BEDROCK_MODEL",
-    }
     effective_provider_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
     mode_default_tokens = MODE_DEFAULT_MAX_TOKENS.get(req.response_mode, MODE_DEFAULT_MAX_TOKENS["fast"])
     effective_max_tokens = int(req.max_tokens or mode_default_tokens)
     if enforce_min_tokens:
         effective_max_tokens = max(256, effective_max_tokens)
-    with _ENV_LOCK:
-        previous_provider_order = os.environ.get("AGENT_PROVIDER_ORDER")
-        previous_models = {env_key: os.environ.get(env_key) for env_key in model_env_keys.values()}
-        try:
-            if effective_provider_order:
-                os.environ["AGENT_PROVIDER_ORDER"] = effective_provider_order
-            for provider, model in (req.model_overrides or {}).items():
-                env_key = model_env_keys.get(provider)
-                if env_key and model.strip():
-                    os.environ[env_key] = model.strip()
-            result = chat_once_detailed(
-                memory=None,
-                THREAD_ID=req.thread_id,
-                user_text_or_prompt=req.message,
-                print_reply=False,
-                max_tokens_override=effective_max_tokens,
-                temperature_override=req.temperature,
-                use_history=req.use_history,
-                history_turns=req.history_turns,
-                user_id=user_id,
-                response_mode=req.response_mode,
-                disable_auto_continue=req.disable_auto_continue,
-                web_search_provider_override=req.web_search_provider,
-                force_web_search=req.force_web_search,
-            )
-        except Exception as exc:
-            traceback.print_exc()
-            error_context = {
-                "phase": "chat_once_detailed",
-                "user_id": user_id,
-                "thread_id": req.thread_id,
-                "provider_order": effective_provider_order or resolve_provider_order(),
-                "response_mode": req.response_mode,
-                "disable_auto_continue": req.disable_auto_continue,
-                "model_overrides": list((req.model_overrides or {}).keys()),
-                "web_search_provider": req.web_search_provider,
-                "force_web_search": req.force_web_search,
-            }
-            raise HTTPException(
-                status_code=500,
-                detail=f"{type(exc).__name__}: {exc}; context={error_context}",
-            ) from exc
-        finally:
-            if previous_provider_order is None:
-                os.environ.pop("AGENT_PROVIDER_ORDER", None)
-            else:
-                os.environ["AGENT_PROVIDER_ORDER"] = previous_provider_order
-            for env_key, previous_value in previous_models.items():
-                if previous_value is None:
-                    os.environ.pop(env_key, None)
-                else:
-                    os.environ[env_key] = previous_value
+    try:
+        result = chat_once_detailed(
+            memory=None,
+            THREAD_ID=req.thread_id,
+            user_text_or_prompt=req.message,
+            print_reply=False,
+            max_tokens_override=effective_max_tokens,
+            temperature_override=req.temperature,
+            use_history=req.use_history,
+            history_turns=req.history_turns,
+            user_id=user_id,
+            response_mode=req.response_mode,
+            disable_auto_continue=req.disable_auto_continue,
+            web_search_provider_override=req.web_search_provider,
+            force_web_search=req.force_web_search,
+            model_overrides=req.model_overrides,
+            provider_order_override=effective_provider_order,
+        )
+    except Exception as exc:
+        traceback.print_exc()
+        error_context = {
+            "phase": "chat_once_detailed",
+            "user_id": user_id,
+            "thread_id": req.thread_id,
+            "provider_order": effective_provider_order or resolve_provider_order(),
+            "response_mode": req.response_mode,
+            "disable_auto_continue": req.disable_auto_continue,
+            "model_overrides": list((req.model_overrides or {}).keys()),
+            "web_search_provider": req.web_search_provider,
+            "force_web_search": req.force_web_search,
+        }
+        raise HTTPException(
+            status_code=500,
+            detail=f"{type(exc).__name__}: {exc}; context={error_context}",
+        ) from exc
     meta = result.get("meta", {}) if isinstance(result, dict) else {}
     return ChatResponse(
         thread_id=req.thread_id,
@@ -495,6 +478,7 @@ def provider_probe(
                 os.environ.pop("MISTRAL_MODEL", None)
             else:
                 os.environ["MISTRAL_MODEL"] = previous_mistral_model
+
 
 @app.get("/api/provider-models/{provider}")
 def provider_models(
