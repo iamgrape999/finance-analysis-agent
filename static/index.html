@@ -105,7 +105,7 @@
 
               <label>
                 Max tokens
-                <input id="maxTokensInput" type="number" value="3000" min="3000" max="12000" />
+                <input id="maxTokensInput" type="number" value="768" min="128" max="12000" />
               </label>
 
                 <label>
@@ -133,21 +133,19 @@
               <label>
                 Provider Order
                 <select id="providerOrderInput">
-                  <option value="">Auto</option>
-                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Fast: Cerebras first, NVIDIA last</option>
-                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Stable: Cerebras first, NVIDIA last</option>
-                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Deep: Cerebras first, NVIDIA last</option>
-                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Recommended: Cerebras/Groq/Mistral first</option>
-                  <option value="mistral,groq,cerebras,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Mistral first, NVIDIA last</option>
-                  <option value="openrouter,gemini,mistral,cerebras,cloudflare,groq,fireworks,aws,nvidia">OpenRouter first, NVIDIA last</option>
-                  <option value="cloudflare,groq,mistral,gemini,openrouter,fireworks,aws,nvidia">Cloudflare first, NVIDIA last</option>
-                  <option value="groq,cerebras,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Groq first, NVIDIA last</option>
-                  <option value="fireworks,openrouter,mistral,gemini,cerebras,cloudflare,groq,aws,nvidia">Fireworks first (uses credit, NVIDIA last)</option>
+                  <option value="">Auto (use backend default)</option>
+                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Recommended: Cerebras / Groq / Mistral first</option>
+                  <option value="mistral,groq,cerebras,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Mistral first</option>
+                  <option value="groq,cerebras,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Groq first</option>
+                  <option value="gemini,mistral,cerebras,openrouter,cloudflare,groq,fireworks,aws,nvidia">Gemini first</option>
+                  <option value="openrouter,gemini,mistral,cerebras,cloudflare,groq,fireworks,aws,nvidia">OpenRouter first</option>
+                  <option value="cloudflare,groq,mistral,gemini,openrouter,fireworks,aws,nvidia">Cloudflare first</option>
+                  <option value="fireworks,openrouter,mistral,gemini,cerebras,cloudflare,groq,aws,nvidia">Fireworks first (uses credit)</option>
+                  <option value="nvidia,cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws">NVIDIA first</option>
                   <option value="nvidia">nvidia only (no fallback)</option>
                   <option value="mistral">mistral only (no fallback)</option>
                   <option value="cerebras">cerebras only (no fallback)</option>
                   <option value="openrouter">openrouter only (no fallback)</option>
-                  <option value="gemini,mistral,cerebras,openrouter,cloudflare,groq,fireworks,aws,nvidia">Gemini first</option>
                 </select>
               </label>
 

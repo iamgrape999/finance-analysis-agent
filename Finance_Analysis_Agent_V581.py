@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -135,7 +136,7 @@ PROVIDER_READ_TIMEOUTS = {
     "aws": int(os.getenv("AWS_TIMEOUT_SEC", str(DEFAULT_PROVIDER_TIMEOUT_SEC))),
     "default": DEFAULT_PROVIDER_TIMEOUT_SEC,
 }
-TOKEN_EST_RATIO = float(os.getenv("TOKEN_EST_RATIO", "0.5"))
+TOKEN_EST_RATIO = float(os.getenv("TOKEN_EST_RATIO", "1.0"))
 MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "9000"))
 MAX_USER_MESSAGE_CHARS = int(os.getenv("MAX_USER_MESSAGE_CHARS", "20000"))
 MAX_HISTORY_TURN_CHARS = int(os.getenv("MAX_HISTORY_TURN_CHARS", "800"))
@@ -207,7 +208,6 @@ NO_SEARCH_PATTERNS = {
 WEB_SEARCH_EXTRA_KEYWORDS = [
     kw.strip() for kw in os.getenv("WEB_SEARCH_EXTRA_KEYWORDS", "").split(",") if kw.strip()
 ]
-GLOBAL_FACT_VALUE_MAX_CHARS = max(50, int(os.getenv("GLOBAL_FACT_VALUE_MAX_CHARS", "500")))
 AUTO_CONTINUE_ENABLED = os.getenv("AUTO_CONTINUE_ENABLED", "true").lower() == "true"
 AUTO_CONTINUE_MAX_ROUNDS = int(os.getenv("AUTO_CONTINUE_MAX_ROUNDS", "2"))
 AUTO_CONTINUE_TAIL_CHARS = int(os.getenv("AUTO_CONTINUE_TAIL_CHARS", "1200"))
@@ -225,6 +225,22 @@ SYSTEM_POLICY = (
     "回答要清楚、友善、具體；資料不足時請明確說明，不要編造。"
     "不要輸出內部推理過程、<think> 標籤或隱藏思考內容。"
 )
+
+_CALL_CONTEXT: threading.local = threading.local()
+
+
+def _run_with_timeout(fn: Any, timeout_sec: float) -> Any:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fn)
+        try:
+            return future.result(timeout=max(1.0, float(timeout_sec)))
+        except concurrent.futures.TimeoutError:
+            raise RuntimeError(f"Call timed out after {timeout_sec:.0f}s")
+
+
+def _ctx_model(provider_key: str, env_key: str, default_val: str) -> str:
+    overrides = getattr(_CALL_CONTEXT, "model_overrides", {}) or {}
+    return overrides.get(provider_key) or os.getenv(env_key, default_val).strip() or default_val
 
 
 @dataclass
@@ -260,9 +276,10 @@ def _lock_path(path: str) -> str:
     return path + ".lock"
 
 
-def _acquire_lock(path: str, ttl_sec: int = 120) -> str:
+def _acquire_lock(path: str, ttl_sec: int = 120, max_wait_sec: float = 60.0) -> str:
     lock = _lock_path(path)
     payload = {"pid": os.getpid(), "ts": time.time(), "path": path}
+    deadline = time.monotonic() + max_wait_sec
     while True:
         try:
             if os.path.exists(lock) and time.time() - os.path.getmtime(lock) > ttl_sec:
@@ -276,6 +293,8 @@ def _acquire_lock(path: str, ttl_sec: int = 120) -> str:
                 json.dump(payload, f, ensure_ascii=False)
             return lock
         except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Could not acquire lock on {path} within {max_wait_sec}s")
             time.sleep(0.05)
 
 
@@ -304,78 +323,6 @@ def _atomic_write(path: str, text: str) -> None:
                     pass
     finally:
         _release_lock(lock)
-
-
-def _run_with_timeout(fn: Any, timeout_sec: Optional[float], provider: str) -> Any:
-    timeout_value = max(1, int(timeout_sec or _chat_timeout(provider)))
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(fn)
-    try:
-        return future.result(timeout=timeout_value)
-    except concurrent.futures.TimeoutError as exc:
-        future.cancel()
-        raise RuntimeError(f"{provider} timed out after {timeout_value}s") from exc
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
-
-
-def _truncate_global_fact_value(value: Any) -> str:
-    return str(value).strip()[:GLOBAL_FACT_VALUE_MAX_CHARS]
-
-
-def _tail_lines(path: str, max_lines: int = 8, block_size: int = 4096) -> List[str]:
-    try:
-        with open(path, "rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            data = b""
-            pos = fh.tell()
-            while pos > 0 and data.count(b"\n") <= max_lines:
-                read_size = min(block_size, pos)
-                pos -= read_size
-                fh.seek(pos)
-                data = fh.read(read_size) + data
-            lines = data.decode("utf-8", errors="ignore").splitlines()
-            return [line for line in lines[-max_lines:] if line.strip()]
-    except Exception:
-        return []
-
-
-def _count_jsonl_lines(path: str, chunk_size: int = 65536) -> int:
-    total = 0
-    last_byte = b""
-    try:
-        with open(path, "rb") as fh:
-            while True:
-                chunk = fh.read(chunk_size)
-                if not chunk:
-                    break
-                total += chunk.count(b"\n")
-                last_byte = chunk[-1:]
-    except Exception:
-        return 0
-    if last_byte and last_byte != b"\n":
-        total += 1
-    return total
-
-
-def _read_thread_preview(chat_path: str, max_scan_lines: int = 16) -> str:
-    try:
-        with open(chat_path, "r", encoding="utf-8") as fh:
-            for idx, line in enumerate(fh):
-                if idx >= max_scan_lines:
-                    break
-                raw = line.strip()
-                if not raw:
-                    continue
-                try:
-                    row = json.loads(raw)
-                except Exception:
-                    continue
-                if row.get("role") == "user" and row.get("content"):
-                    return strip_redundant(str(row.get("content", "")))[:120]
-    except Exception:
-        return ""
-    return ""
 
 
 PII_PATTERNS = [
@@ -818,50 +765,19 @@ def _call_provider_once(
     temperature: float,
     provider_profile: Optional[Dict[str, Any]] = None,
     timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
 ) -> Optional[ModelReply]:
     effective_max_tokens = min(int(max_tokens), int((provider_profile or {}).get("max_tokens", max_tokens)))
     effective_system_policy = str((provider_profile or {}).get("system_policy", SYSTEM_POLICY))
     if provider == "openrouter":
-        return call_openrouter(
-            prompt,
-            max_tokens=effective_max_tokens,
-            temperature=temperature,
-            timeout_override=timeout_override,
-            model_override=model_override,
-        )
+        return call_openrouter(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "nvidia":
-        return call_nvidia(
-            prompt,
-            max_tokens=effective_max_tokens,
-            temperature=temperature,
-            timeout_override=timeout_override,
-            model_override=model_override,
-        )
+        return call_nvidia(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "cerebras":
-        return call_cerebras(
-            prompt,
-            max_tokens=effective_max_tokens,
-            temperature=temperature,
-            timeout_override=timeout_override,
-            model_override=model_override,
-        )
+        return call_cerebras(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "mistral":
-        return call_mistral(
-            prompt,
-            max_tokens=effective_max_tokens,
-            temperature=temperature,
-            timeout_override=timeout_override,
-            model_override=model_override,
-        )
+        return call_mistral(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "gemini":
-        return call_gemini(
-            prompt,
-            max_tokens=effective_max_tokens,
-            temperature=temperature,
-            timeout_override=timeout_override,
-            model_override=model_override,
-        )
+        return call_gemini(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "cloudflare":
         return call_cloudflare(
             prompt,
@@ -869,7 +785,6 @@ def _call_provider_once(
             temperature=temperature,
             system_policy=effective_system_policy,
             timeout_override=timeout_override,
-            model_override=model_override,
         )
     if provider == "groq":
         return call_groq(
@@ -878,24 +793,11 @@ def _call_provider_once(
             temperature=temperature,
             system_policy=effective_system_policy,
             timeout_override=timeout_override,
-            model_override=model_override,
         )
     if provider == "fireworks":
-        return call_fireworks(
-            prompt,
-            max_tokens=effective_max_tokens,
-            temperature=temperature,
-            timeout_override=timeout_override,
-            model_override=model_override,
-        )
+        return call_fireworks(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     if provider == "aws":
-        return call_aws(
-            prompt,
-            max_tokens=effective_max_tokens,
-            temperature=temperature,
-            timeout_override=timeout_override,
-            model_override=model_override,
-        )
+        return call_aws(prompt, max_tokens=effective_max_tokens, temperature=temperature, timeout_override=timeout_override)
     return None
 
 
@@ -1010,7 +912,7 @@ def upsert_global_fact(key: str, value: str, user_id: Optional[str] = None) -> D
     k = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_key.strip())[:80]
     if not k:
         return facts
-    facts[k] = {"value": _truncate_global_fact_value(value), "ts": datetime.now().isoformat()}
+    facts[k] = {"value": str(value).strip(), "ts": datetime.now().isoformat()}
     return save_global_facts(facts, user_id)
 
 
@@ -1027,7 +929,7 @@ def upsert_global_facts_from_text(text: str, user_id: Optional[str] = None) -> D
     facts = load_global_facts(user_id)
     now = datetime.now().isoformat()
     for key, value in re.findall(r"([A-Za-z][A-Za-z0-9_.-]{1,79})\s*=\s*([^\s,;，；。]+)", t):
-        facts[key] = {"value": _truncate_global_fact_value(value), "ts": now}
+        facts[key] = {"value": value.strip()[:500], "ts": now}
     return save_global_facts(facts, user_id)
 
 
@@ -1043,19 +945,42 @@ def list_thread_summaries(user_id: Optional[str] = None) -> List[Dict[str, Any]]
         chat_path = os.path.join(thread_dir, CHAT_FILENAME)
         if not os.path.isdir(thread_dir) or not os.path.exists(chat_path):
             continue
-        message_count = _count_jsonl_lines(chat_path)
-        if not message_count:
+        try:
+            with open(chat_path, "rb") as _fh:
+                _fh.seek(0, 2)
+                size = _fh.tell()
+                _fh.seek(max(0, size - 8192))
+                tail_bytes = _fh.read()
+        except OSError:
             continue
-        preview = _read_thread_preview(chat_path)
-        updated_at = ""
-        for raw in reversed(_tail_lines(chat_path, max_lines=8)):
+        tail_lines = [ln for ln in tail_bytes.decode("utf-8", errors="replace").splitlines() if ln.strip()]
+        if not tail_lines:
+            continue
+        last_row: Dict[str, Any] = {}
+        for ln in reversed(tail_lines):
             try:
-                row = json.loads(raw)
-            except Exception:
-                continue
-            updated_at = str(row.get("ts") or "")
-            if updated_at:
+                last_row = json.loads(ln)
                 break
+            except Exception:
+                pass
+        preview = ""
+        try:
+            with open(chat_path, "r", encoding="utf-8", errors="replace") as _fh2:
+                for ln in _fh2:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        row = json.loads(ln)
+                    except Exception:
+                        continue
+                    if row.get("role") == "user" and row.get("content"):
+                        preview = strip_redundant(str(row["content"]))[:120]
+                        break
+        except OSError:
+            pass
+        message_count = sum(1 for ln in tail_lines if ln.strip())
+        updated_at = last_row.get("ts", "")
         try:
             mtime = os.path.getmtime(chat_path)
         except Exception:
@@ -1130,9 +1055,12 @@ def provider_diagnostics() -> Dict[str, Any]:
     return diag
 
 
-def resolve_provider_order(provider_order_override: Optional[str] = None) -> List[str]:
+def resolve_provider_order() -> List[str]:
     ready = provider_readiness()
-    provider_order = (provider_order_override or os.getenv("AGENT_PROVIDER_ORDER", AGENT_PROVIDER_ORDER) or "").strip()
+    provider_order = (
+        getattr(_CALL_CONTEXT, "provider_order_override", None)
+        or os.getenv("AGENT_PROVIDER_ORDER", AGENT_PROVIDER_ORDER)
+    )
     provider_disable = os.getenv("AGENT_PROVIDER_DISABLE", AGENT_PROVIDER_DISABLE).lower()
     disabled = {p.strip() for p in provider_disable.split(",") if p.strip()}
     out: List[str] = []
@@ -1371,14 +1299,8 @@ def _resolve_nvidia_model(model: Optional[str] = None) -> str:
     return NVIDIA_MODEL_ALIASES.get(requested, requested)
 
 
-def call_openrouter(
-    prompt: str,
-    max_tokens: int,
-    temperature: float,
-    timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
-) -> ModelReply:
-    model = str(model_override or os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL)).strip() or OPENROUTER_MODEL
+def call_openrouter(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    model = _ctx_model("openrouter", "OPENROUTER_MODEL", OPENROUTER_MODEL)
     url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1") + "/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -1410,14 +1332,8 @@ def call_openrouter(
     return ModelReply(text=text, meta={"provider": "openrouter", "model": data.get("model", model), "usage": data.get("usage")})
 
 
-def call_nvidia(
-    prompt: str,
-    max_tokens: int,
-    temperature: float,
-    timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
-) -> ModelReply:
-    requested_model = str(model_override or os.getenv("NVIDIA_MODEL", NVIDIA_MODEL)).strip() or NVIDIA_MODEL
+def call_nvidia(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    requested_model = _ctx_model("nvidia", "NVIDIA_MODEL", NVIDIA_MODEL)
     model = _resolve_nvidia_model(requested_model)
     url = os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL
     headers = {
@@ -1484,24 +1400,18 @@ def call_nvidia(
     )
 
 
-def call_cerebras(
-    prompt: str,
-    max_tokens: int,
-    temperature: float,
-    timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
-) -> ModelReply:
-    requested_model = str(model_override or os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL)).strip() or CEREBRAS_MODEL
+def call_cerebras(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    timeout_sec = _effective_timeout("cerebras", timeout_override)
+    requested_model = _ctx_model("cerebras", "CEREBRAS_MODEL", CEREBRAS_MODEL)
     model = CEREBRAS_MODEL_ALIASES.get(requested_model, requested_model)
     try:
         from cerebras.cloud.sdk import Cerebras  # type: ignore
     except Exception as exc:
         raise RuntimeError("cerebras-cloud-sdk is not installed") from exc
 
-    timeout_sec = _effective_timeout("cerebras", timeout_override)
+    client = Cerebras(api_key=CEREBRAS_API_KEY)
 
-    def _invoke() -> Any:
-        client = Cerebras(api_key=CEREBRAS_API_KEY)
+    def _do_call() -> Any:
         return client.chat.completions.create(
             messages=[
                 {"role": "system", "content": SYSTEM_POLICY},
@@ -1514,7 +1424,7 @@ def call_cerebras(
             stream=False,
         )
 
-    completion = _run_with_timeout(_invoke, timeout_sec, "cerebras")
+    completion = _run_with_timeout(_do_call, timeout_sec)
     choices = getattr(completion, "choices", None) or []
     text = ""
     if choices:
@@ -1544,14 +1454,8 @@ def call_cerebras(
     )
 
 
-def call_mistral(
-    prompt: str,
-    max_tokens: int,
-    temperature: float,
-    timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
-) -> ModelReply:
-    model = str(model_override or os.getenv("MISTRAL_MODEL", MISTRAL_MODEL)).strip() or MISTRAL_MODEL
+def call_mistral(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    model = _ctx_model("mistral", "MISTRAL_MODEL", MISTRAL_MODEL)
     url = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1/chat/completions").strip()
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -1605,9 +1509,8 @@ def call_groq(
     temperature: float,
     system_policy: str = SYSTEM_POLICY,
     timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
 ) -> ModelReply:
-    model = str(model_override or os.getenv("GROQ_MODEL", GROQ_MODEL)).strip() or GROQ_MODEL
+    model = _ctx_model("groq", "GROQ_MODEL", GROQ_MODEL)
     url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     payload = {
@@ -1629,14 +1532,8 @@ def call_groq(
     return ModelReply(text=text, meta={"provider": "groq", "model": model, "usage": data.get("usage")})
 
 
-def call_fireworks(
-    prompt: str,
-    max_tokens: int,
-    temperature: float,
-    timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
-) -> ModelReply:
-    model = str(model_override or os.getenv("FIREWORKS_MODEL", FIREWORKS_MODEL)).strip() or FIREWORKS_MODEL
+def call_fireworks(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    model = _ctx_model("fireworks", "FIREWORKS_MODEL", FIREWORKS_MODEL)
     base_url = os.getenv("FIREWORKS_BASE_URL", FIREWORKS_BASE_URL).rstrip("/")
     url = f"{base_url}/chat/completions"
     headers = {"Authorization": f"Bearer {FIREWORKS_API_KEY}", "Content-Type": "application/json"}
@@ -1719,9 +1616,8 @@ def call_cloudflare(
     temperature: float,
     system_policy: str = SYSTEM_POLICY,
     timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
 ) -> ModelReply:
-    model = str(model_override or os.getenv("CF_MODEL", CF_MODEL)).strip() or CF_MODEL
+    model = _ctx_model("cloudflare", "CF_MODEL", CF_MODEL)
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
     payload = {
@@ -1746,24 +1642,18 @@ def call_cloudflare(
     return ModelReply(text=str(text).strip(), meta={"provider": "cloudflare", "model": model, "usage": usage})
 
 
-def call_gemini(
-    prompt: str,
-    max_tokens: int,
-    temperature: float,
-    timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
-) -> ModelReply:
-    model = str(model_override or os.getenv("GEMINI_MODEL", GEMINI_MODEL)).strip() or GEMINI_MODEL
+def call_gemini(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    timeout_sec = _effective_timeout("gemini", timeout_override)
+    model = _ctx_model("gemini", "GEMINI_MODEL", GEMINI_MODEL)
     try:
         from google import genai  # type: ignore
         from google.genai import types  # type: ignore
     except Exception as exc:
         raise RuntimeError("google-genai is not installed") from exc
 
-    timeout_sec = _effective_timeout("gemini", timeout_override)
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
-    def _invoke() -> Any:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+    def _do_call() -> Any:
         return client.models.generate_content(
             model=model,
             contents=prompt,
@@ -1774,7 +1664,7 @@ def call_gemini(
             ),
         )
 
-    response = _run_with_timeout(_invoke, timeout_sec, "gemini")
+    response = _run_with_timeout(_do_call, timeout_sec)
     text = getattr(response, "text", "") or ""
     if not text:
         raise RuntimeError("Gemini returned empty content")
@@ -1788,14 +1678,8 @@ def call_gemini(
     return ModelReply(text=text.strip(), meta={"provider": "gemini", "model": model, "usage": usage})
 
 
-def call_aws(
-    prompt: str,
-    max_tokens: int,
-    temperature: float,
-    timeout_override: Optional[float] = None,
-    model_override: Optional[str] = None,
-) -> ModelReply:
-    model = str(model_override or os.getenv("AWS_BEDROCK_MODEL", AWS_BEDROCK_MODEL)).strip() or AWS_BEDROCK_MODEL
+def call_aws(prompt: str, max_tokens: int, temperature: float, timeout_override: Optional[float] = None) -> ModelReply:
+    model = _ctx_model("aws", "AWS_BEDROCK_MODEL", AWS_BEDROCK_MODEL)
     try:
         import boto3  # type: ignore
         import botocore  # type: ignore
@@ -1841,13 +1725,10 @@ def route_generate(
     temperature: float = 0.2,
     response_mode: str = "fast",
     disable_auto_continue: bool = False,
-    provider_order_override: Optional[str] = None,
-    provider_models_override: Optional[Dict[str, str]] = None,
 ) -> ModelReply:
-    providers = resolve_provider_order(provider_order_override)
+    providers = resolve_provider_order()
     if not providers:
         return ModelReply(local_fallback_generate(str(prompt or "")), {"provider": "local_fallback"})
-    provider_models_override = dict(provider_models_override or {})
 
     if isinstance(prompt, dict):
         prompt_bundle = {
@@ -1886,8 +1767,7 @@ def route_generate(
         try:
             remaining_budget_sec = max(3.0, route_timeout_sec - (time.perf_counter() - route_started))
             effective_attempt_timeout_sec = min(remaining_budget_sec, float(per_attempt_timeout_sec))
-            current_nvidia_model = provider_models_override.get("nvidia") or os.getenv("NVIDIA_MODEL", NVIDIA_MODEL)
-            if provider == "nvidia" and _resolve_nvidia_model(current_nvidia_model) == NVIDIA_NEMOTRON_SUPER_MODEL:
+            if provider == "nvidia" and _resolve_nvidia_model() == NVIDIA_NEMOTRON_SUPER_MODEL:
                 effective_attempt_timeout_sec = min(remaining_budget_sec, 30.0)
             context_kind = "light" if provider in {"groq", "cloudflare"} else "heavy"
             provider_prompt = prompt_bundle[context_kind]
@@ -1945,7 +1825,6 @@ def route_generate(
                 temperature=temperature,
                 provider_profile=provider_profile,
                 timeout_override=effective_attempt_timeout_sec,
-                model_override=provider_models_override.get(provider),
             )
             trace["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
             trace["status"] = "ok"
@@ -1994,7 +1873,6 @@ def route_generate(
                         temperature=temperature,
                         provider_profile=provider_profile,
                         timeout_override=continue_attempt_timeout_sec,
-                        model_override=provider_models_override.get(provider),
                     )
                     continue_trace["elapsed_ms"] = round((time.perf_counter() - continue_started) * 1000, 1)
                     continue_trace["status"] = "ok" if continuation and strip_redundant(continuation.text) else "error"
@@ -2068,45 +1946,6 @@ def route_generate(
             "disable_auto_continue": disable_auto_continue,
         },
     )
-
-
-def _build_context_legacy(
-    adapter: MemoryAdapter,
-    user_text: str,
-    history_turns: int,
-    use_history: bool,
-    use_summary: bool,
-    user_id: Optional[str] = None,
-) -> str:
-    blocks: List[str] = []
-    global_facts = load_global_facts(user_id)
-    if global_facts:
-        lines = []
-        for key in sorted(global_facts.keys()):
-            value = global_facts[key]
-            if isinstance(value, dict):
-                lines.append(f"{key}={value.get('value', '')}")
-            else:
-                lines.append(f"{key}={value}")
-        if lines:
-            blocks.append("[全域記憶]\n" + "\n".join(lines))
-    if use_summary:
-        summary = adapter.load_summary()
-        if summary:
-            blocks.append("[對話摘要]\n" + summary[:2000])
-    if use_history:
-        turns = adapter.get_recent_turns(history_turns)
-        if turns:
-            lines = []
-            for turn in turns:
-                role = str(turn.get("role", "")).upper()
-                content = str(turn.get("content", ""))[:1200]
-                if role and content:
-                    lines.append(f"{role}: {content}")
-            if lines:
-                blocks.append("[最近對話]\n" + "\n".join(lines))
-    blocks.append("[本輪使用者問題]\n" + user_text)
-    return "\n\n".join(blocks)
 
 
 def _build_context(
@@ -2328,10 +2167,12 @@ def chat_once_detailed(
     disable_auto_continue: bool = False,
     web_search_provider_override: Optional[str] = None,
     force_web_search: bool = False,
+    model_overrides: Optional[Dict[str, str]] = None,
     provider_order_override: Optional[str] = None,
-    provider_models_override: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     del min_tokens, summary_chars
+    _CALL_CONTEXT.model_overrides = {k: v.strip() for k, v in (model_overrides or {}).items() if v and v.strip()}
+    _CALL_CONTEXT.provider_order_override = (provider_order_override or "").strip() or None
     user_text = strip_redundant(user_text_or_prompt)
     if not user_text:
         return {"reply": "請輸入問題。", "meta": {"provider": "local"}}
@@ -2400,15 +2241,17 @@ def chat_once_detailed(
     except Exception as exc:
         debug_log("memory", f"failed to persist user turn: {type(exc).__name__}: {exc}")
     t0 = time.perf_counter()
-    reply = route_generate(
-        {"heavy": mask_pii(heavy_prompt), "light": mask_pii(light_prompt)},
-        max_tokens=int(max_tokens_override or MAX_OUTPUT_TOKENS),
-        temperature=float(temperature_override if temperature_override is not None else 0.2),
-        response_mode=response_mode,
-        disable_auto_continue=disable_auto_continue,
-        provider_order_override=provider_order_override,
-        provider_models_override=provider_models_override,
-    )
+    try:
+        reply = route_generate(
+            {"heavy": mask_pii(heavy_prompt), "light": mask_pii(light_prompt)},
+            max_tokens=int(max_tokens_override or MAX_OUTPUT_TOKENS),
+            temperature=float(temperature_override if temperature_override is not None else 0.2),
+            response_mode=response_mode,
+            disable_auto_continue=disable_auto_continue,
+        )
+    finally:
+        _CALL_CONTEXT.model_overrides = None
+        _CALL_CONTEXT.provider_order_override = None
     latency_s = round(time.perf_counter() - t0, 3)
     assistant_text = strip_redundant(clean_model_output(reply.text))
     meta = dict(reply.meta or {})
