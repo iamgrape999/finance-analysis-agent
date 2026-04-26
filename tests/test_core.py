@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -47,6 +48,21 @@ class MemoryIsolationTests(unittest.TestCase):
 
         self.assertEqual(hanli_facts["customer_segment"]["value"], "SME")
         self.assertEqual(cathy_facts["customer_segment"]["value"], "Enterprise")
+
+    def test_global_facts_are_truncated_to_safe_length(self):
+        long_value = "A" * (agent.GLOBAL_FACT_VALUE_MAX_CHARS + 50)
+        agent.upsert_global_fact("notes", long_value, user_id="hanli")
+        facts = agent.load_global_facts(user_id="hanli")
+        self.assertEqual(len(facts["notes"]["value"]), agent.GLOBAL_FACT_VALUE_MAX_CHARS)
+
+    def test_thread_summaries_use_lightweight_paths(self):
+        adapter = agent.MemoryAdapter(memory=None, THREAD_ID="THREAD_LIGHT", USER_ID="hanli")
+        adapter.add_turn("user", "preview-text")
+        adapter.add_turn("assistant", "reply-text")
+        summaries = agent.list_thread_summaries(user_id="hanli")
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0]["message_count"], 2)
+        self.assertIn("preview-text", summaries[0]["preview"])
 
 
 class ProviderOverrideTests(unittest.TestCase):
@@ -171,6 +187,22 @@ class SessionAuthApiTests(unittest.TestCase):
 
         self.assertEqual(health.status_code, 401)
         self.assertIn("expired", health.json()["detail"].lower())
+
+
+class StartupWarningTests(unittest.TestCase):
+    def test_startup_warns_when_auth_is_open(self):
+        old_app_password = app.APP_PASSWORD
+        old_app_users_raw = app.APP_USERS_RAW
+        try:
+            app.APP_PASSWORD = ""
+            app.APP_USERS_RAW = ""
+            with patch("builtins.print") as mock_print:
+                asyncio.run(app.startup_warn())
+        finally:
+            app.APP_PASSWORD = old_app_password
+            app.APP_USERS_RAW = old_app_users_raw
+        mock_print.assert_called()
+        self.assertIn("API is open to all users", mock_print.call_args[0][0])
 
 
 class SearchClassifierTests(unittest.TestCase):

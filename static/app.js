@@ -65,7 +65,6 @@ const responseModeKey = "finance_agent_response_mode";
 const webSearchProviderKey = "finance_agent_web_search_provider";
 const forceWebSearchKey = "finance_agent_force_web_search";
 const themeModeKey = "finance_agent_theme_mode";
-const CHAT_REQUEST_TIMEOUT_MS = 90000;
 const FRONTEND_BUILD = "2026-04-21-route-budget-v2";
 const responsePresets = {
   fast: {
@@ -949,6 +948,8 @@ async function sendMessage(message, endpoint = "/api/chat") {
     if (timeoutId !== null) {
       window.clearTimeout(timeoutId);
     }
+    forceWebSearchInput.checked = false;
+    localStorage.setItem(forceWebSearchKey, "false");
     setBusy(false);
     input.focus();
   }

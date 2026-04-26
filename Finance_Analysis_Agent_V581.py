@@ -14,6 +14,7 @@ under MEMORY_ROOT so Render can mount a persistent disk there.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import re
@@ -206,6 +207,7 @@ NO_SEARCH_PATTERNS = {
 WEB_SEARCH_EXTRA_KEYWORDS = [
     kw.strip() for kw in os.getenv("WEB_SEARCH_EXTRA_KEYWORDS", "").split(",") if kw.strip()
 ]
+GLOBAL_FACT_VALUE_MAX_CHARS = max(50, int(os.getenv("GLOBAL_FACT_VALUE_MAX_CHARS", "500")))
 AUTO_CONTINUE_ENABLED = os.getenv("AUTO_CONTINUE_ENABLED", "true").lower() == "true"
 AUTO_CONTINUE_MAX_ROUNDS = int(os.getenv("AUTO_CONTINUE_MAX_ROUNDS", "2"))
 AUTO_CONTINUE_TAIL_CHARS = int(os.getenv("AUTO_CONTINUE_TAIL_CHARS", "1200"))
@@ -302,6 +304,78 @@ def _atomic_write(path: str, text: str) -> None:
                     pass
     finally:
         _release_lock(lock)
+
+
+def _run_with_timeout(fn: Any, timeout_sec: Optional[float], provider: str) -> Any:
+    timeout_value = max(1, int(timeout_sec or _chat_timeout(provider)))
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(fn)
+    try:
+        return future.result(timeout=timeout_value)
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        raise RuntimeError(f"{provider} timed out after {timeout_value}s") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _truncate_global_fact_value(value: Any) -> str:
+    return str(value).strip()[:GLOBAL_FACT_VALUE_MAX_CHARS]
+
+
+def _tail_lines(path: str, max_lines: int = 8, block_size: int = 4096) -> List[str]:
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            data = b""
+            pos = fh.tell()
+            while pos > 0 and data.count(b"\n") <= max_lines:
+                read_size = min(block_size, pos)
+                pos -= read_size
+                fh.seek(pos)
+                data = fh.read(read_size) + data
+            lines = data.decode("utf-8", errors="ignore").splitlines()
+            return [line for line in lines[-max_lines:] if line.strip()]
+    except Exception:
+        return []
+
+
+def _count_jsonl_lines(path: str, chunk_size: int = 65536) -> int:
+    total = 0
+    last_byte = b""
+    try:
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(chunk_size)
+                if not chunk:
+                    break
+                total += chunk.count(b"\n")
+                last_byte = chunk[-1:]
+    except Exception:
+        return 0
+    if last_byte and last_byte != b"\n":
+        total += 1
+    return total
+
+
+def _read_thread_preview(chat_path: str, max_scan_lines: int = 16) -> str:
+    try:
+        with open(chat_path, "r", encoding="utf-8") as fh:
+            for idx, line in enumerate(fh):
+                if idx >= max_scan_lines:
+                    break
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                if row.get("role") == "user" and row.get("content"):
+                    return strip_redundant(str(row.get("content", "")))[:120]
+    except Exception:
+        return ""
+    return ""
 
 
 PII_PATTERNS = [
@@ -936,7 +1010,7 @@ def upsert_global_fact(key: str, value: str, user_id: Optional[str] = None) -> D
     k = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_key.strip())[:80]
     if not k:
         return facts
-    facts[k] = {"value": str(value).strip(), "ts": datetime.now().isoformat()}
+    facts[k] = {"value": _truncate_global_fact_value(value), "ts": datetime.now().isoformat()}
     return save_global_facts(facts, user_id)
 
 
@@ -953,7 +1027,7 @@ def upsert_global_facts_from_text(text: str, user_id: Optional[str] = None) -> D
     facts = load_global_facts(user_id)
     now = datetime.now().isoformat()
     for key, value in re.findall(r"([A-Za-z][A-Za-z0-9_.-]{1,79})\s*=\s*([^\s,;，；。]+)", t):
-        facts[key] = {"value": value.strip(), "ts": now}
+        facts[key] = {"value": _truncate_global_fact_value(value), "ts": now}
     return save_global_facts(facts, user_id)
 
 
@@ -969,15 +1043,19 @@ def list_thread_summaries(user_id: Optional[str] = None) -> List[Dict[str, Any]]
         chat_path = os.path.join(thread_dir, CHAT_FILENAME)
         if not os.path.isdir(thread_dir) or not os.path.exists(chat_path):
             continue
-        rows = MemoryAdapter(memory=None, THREAD_ID=name, USER_ID=user_id).load_chat_raw()
-        if not rows:
+        message_count = _count_jsonl_lines(chat_path)
+        if not message_count:
             continue
-        preview = ""
-        for row in rows:
-            if row.get("role") == "user" and row.get("content"):
-                preview = strip_redundant(str(row.get("content", "")))[:120]
+        preview = _read_thread_preview(chat_path)
+        updated_at = ""
+        for raw in reversed(_tail_lines(chat_path, max_lines=8)):
+            try:
+                row = json.loads(raw)
+            except Exception:
+                continue
+            updated_at = str(row.get("ts") or "")
+            if updated_at:
                 break
-        updated_at = rows[-1].get("ts", "")
         try:
             mtime = os.path.getmtime(chat_path)
         except Exception:
@@ -985,7 +1063,7 @@ def list_thread_summaries(user_id: Optional[str] = None) -> List[Dict[str, Any]]
         out.append({
             "thread_id": name,
             "updated_at": updated_at,
-            "message_count": len(rows),
+            "message_count": message_count,
             "preview": preview or name,
             "mtime": mtime,
         })
@@ -1413,7 +1491,6 @@ def call_cerebras(
     timeout_override: Optional[float] = None,
     model_override: Optional[str] = None,
 ) -> ModelReply:
-    del timeout_override
     requested_model = str(model_override or os.getenv("CEREBRAS_MODEL", CEREBRAS_MODEL)).strip() or CEREBRAS_MODEL
     model = CEREBRAS_MODEL_ALIASES.get(requested_model, requested_model)
     try:
@@ -1421,18 +1498,23 @@ def call_cerebras(
     except Exception as exc:
         raise RuntimeError("cerebras-cloud-sdk is not installed") from exc
 
-    client = Cerebras(api_key=CEREBRAS_API_KEY)
-    completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": SYSTEM_POLICY},
-            {"role": "user", "content": prompt},
-        ],
-        model=model,
-        max_completion_tokens=int(max_tokens),
-        temperature=float(temperature),
-        top_p=1,
-        stream=False,
-    )
+    timeout_sec = _effective_timeout("cerebras", timeout_override)
+
+    def _invoke() -> Any:
+        client = Cerebras(api_key=CEREBRAS_API_KEY)
+        return client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": SYSTEM_POLICY},
+                {"role": "user", "content": prompt},
+            ],
+            model=model,
+            max_completion_tokens=int(max_tokens),
+            temperature=float(temperature),
+            top_p=1,
+            stream=False,
+        )
+
+    completion = _run_with_timeout(_invoke, timeout_sec, "cerebras")
     choices = getattr(completion, "choices", None) or []
     text = ""
     if choices:
@@ -1671,7 +1753,6 @@ def call_gemini(
     timeout_override: Optional[float] = None,
     model_override: Optional[str] = None,
 ) -> ModelReply:
-    del timeout_override
     model = str(model_override or os.getenv("GEMINI_MODEL", GEMINI_MODEL)).strip() or GEMINI_MODEL
     try:
         from google import genai  # type: ignore
@@ -1679,16 +1760,21 @@ def call_gemini(
     except Exception as exc:
         raise RuntimeError("google-genai is not installed") from exc
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_POLICY,
-            max_output_tokens=int(max_tokens),
-            temperature=float(temperature),
-        ),
-    )
+    timeout_sec = _effective_timeout("gemini", timeout_override)
+
+    def _invoke() -> Any:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        return client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_POLICY,
+                max_output_tokens=int(max_tokens),
+                temperature=float(temperature),
+            ),
+        )
+
+    response = _run_with_timeout(_invoke, timeout_sec, "gemini")
     text = getattr(response, "text", "") or ""
     if not text:
         raise RuntimeError("Gemini returned empty content")

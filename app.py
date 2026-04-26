@@ -87,6 +87,12 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def startup_warn() -> None:
+    if not APP_PASSWORD and not configured_users():
+        print("[WARN] APP_PASSWORD and APP_USERS are both unset - API is open to all users.")
+
+
 class ChatRequest(BaseModel):
     thread_id: str = Field(default="WEB_DEFAULT", max_length=80)
     message: str = Field(min_length=1, max_length=200_000)
