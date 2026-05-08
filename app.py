@@ -21,6 +21,7 @@ from Finance_Analysis_Agent_V581 import (
     FIREWORKS_MODEL,
     GEMINI_API_KEY,
     GEMINI_MODEL,
+    GROQ_API_KEY,
     GROQ_MODEL,
     MISTRAL_MODEL,
     NVIDIA_MODEL,
@@ -432,9 +433,13 @@ def chat(
 def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) -> ChatResponse:
     has_image = bool(req.image_base64)
     if has_image:
-        if not GEMINI_API_KEY:
-            raise HTTPException(status_code=400, detail="圖片分析需要 Gemini API 金鑰，請聯絡管理員設定。")
-        effective_provider_order = "gemini"
+        if not GEMINI_API_KEY and not GROQ_API_KEY:
+            raise HTTPException(status_code=400, detail="圖片分析需要 Gemini 或 Groq API 金鑰，請聯絡管理員設定。")
+        # gemini first; groq (llama-3.2-vision) as free failover
+        vision_providers = ",".join(p for p in ["gemini", "groq"] if (
+            (p == "gemini" and GEMINI_API_KEY) or (p == "groq" and GROQ_API_KEY)
+        ))
+        effective_provider_order = vision_providers
     else:
         effective_provider_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
     mode_default_tokens = MODE_DEFAULT_MAX_TOKENS.get(req.response_mode, MODE_DEFAULT_MAX_TOKENS["fast"])

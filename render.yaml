@@ -42,3 +42,5 @@ services:
         value: "100"
       - key: GEMINI_DAILY_CHAT_CAP
         value: "400"
+      - key: GROQ_VISION_MODEL
+        value: llama-3.2-11b-vision-preview

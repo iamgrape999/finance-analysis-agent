@@ -105,6 +105,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant").strip()
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview").strip()
 
 CF_API_TOKEN = os.getenv("CF_API_TOKEN", os.getenv("CF_API_KEY", "")).strip()
 CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID", "").strip()
@@ -1517,19 +1518,35 @@ def call_groq(
     system_policy: str = SYSTEM_POLICY,
     timeout_override: Optional[float] = None,
 ) -> ModelReply:
-    model = _ctx_model("groq", "GROQ_MODEL", GROQ_MODEL)
+    img_b64: str = getattr(_CALL_CONTEXT, "image_b64", None) or ""
+    img_mime: str = getattr(_CALL_CONTEXT, "image_mime", None) or "image/jpeg"
+    is_vision = bool(img_b64)
+
+    if is_vision:
+        model = GROQ_VISION_MODEL
+        # vision requests need more time than the standard 8s groq timeout
+        effective_timeout = max(_effective_timeout("groq", timeout_override), 25)
+        user_content: Any = [
+            {"type": "image_url", "image_url": {"url": f"data:{img_mime};base64,{img_b64}"}},
+            {"type": "text", "text": prompt},
+        ]
+    else:
+        model = _ctx_model("groq", "GROQ_MODEL", GROQ_MODEL)
+        effective_timeout = _effective_timeout("groq", timeout_override)
+        user_content = prompt
+
     url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": model,
         "messages": [
             {"role": "system", "content": system_policy},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": user_content},
         ],
         "max_tokens": min(int(max_tokens), GROQ_MAX_OUTPUT_TOKENS),
         "temperature": float(temperature),
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=_effective_timeout("groq", timeout_override))
+    resp = requests.post(url, headers=headers, json=payload, timeout=effective_timeout)
     if resp.status_code >= 400:
         raise RuntimeError(f"Groq error {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
