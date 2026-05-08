@@ -72,33 +72,58 @@ BF_LOCKOUT_SEC   = int(os.getenv("BF_LOCKOUT_SEC",   "600"))  # 10-minute lockou
 GEMINI_MAX_CONCURRENT = int(os.getenv("GEMINI_MAX_CONCURRENT", "2"))
 _gemini_semaphore = threading.Semaphore(GEMINI_MAX_CONCURRENT)
 
-# ── Daily Gemini hard cap (application-level GCP Quota equivalent) ────────────
-# Resets at UTC midnight. Replaces need to configure GCP Quota on console.
-# Tune via env vars: GEMINI_DAILY_CAP (requests) and GEMINI_DAILY_CHAT_CAP.
-GEMINI_DAILY_IMAGE_CAP = int(os.getenv("GEMINI_DAILY_IMAGE_CAP", "100"))  # image requests/day
-GEMINI_DAILY_CHAT_CAP  = int(os.getenv("GEMINI_DAILY_CHAT_CAP",  "400"))  # all gemini calls/day
+# ── Daily Gemini hard cap — persisted to disk so Render restarts don't reset it ─
+GEMINI_DAILY_IMAGE_CAP = int(os.getenv("GEMINI_DAILY_IMAGE_CAP", "100"))
+GEMINI_DAILY_CHAT_CAP  = int(os.getenv("GEMINI_DAILY_CHAT_CAP",  "400"))
 _daily_lock = threading.Lock()
-_daily_gemini_image_count: Dict[str, int] = {}   # {"YYYY-MM-DD": count}
-_daily_gemini_chat_count:  Dict[str, int] = {}
+_DAILY_CAP_FILE = os.path.join(os.getenv("MEMORY_ROOT", "/tmp/memory"), "_gemini_daily_cap.json")
 
 
 def _today_utc() -> str:
     return time.strftime("%Y-%m-%d", time.gmtime())
 
 
+def _load_daily_counts() -> Dict[str, Any]:
+    try:
+        with open(_DAILY_CAP_FILE, "r", encoding="utf-8") as f:
+            data = __import__("json").load(f)
+        today = _today_utc()
+        # discard stale dates
+        return {k: v for k, v in data.items() if k.startswith(today)}
+    except Exception:
+        return {}
+
+
+def _save_daily_counts(data: Dict[str, Any]) -> None:
+    try:
+        os.makedirs(os.path.dirname(_DAILY_CAP_FILE), exist_ok=True)
+        tmp = _DAILY_CAP_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            __import__("json").dump(data, f)
+        os.replace(tmp, _DAILY_CAP_FILE)
+    except Exception:
+        pass  # disk write failure is non-fatal; in-memory counter still protects
+
+
+# in-memory cache loaded from disk at startup
+_daily_counts: Dict[str, Any] = _load_daily_counts()
+
+
 def _check_daily_gemini(is_image: bool) -> bool:
-    """Returns True if allowed, False if daily cap exceeded."""
     today = _today_utc()
+    image_key = f"{today}:image"
+    chat_key  = f"{today}:chat"
     with _daily_lock:
-        store = _daily_gemini_image_count if is_image else _daily_gemini_chat_count
-        cap   = GEMINI_DAILY_IMAGE_CAP    if is_image else GEMINI_DAILY_CHAT_CAP
-        # purge old dates to save memory
-        for old in [k for k in store if k != today]:
-            del store[old]
-        current = store.get(today, 0)
+        # purge old keys
+        for old in [k for k in _daily_counts if not k.startswith(today)]:
+            del _daily_counts[old]
+        key = image_key if is_image else chat_key
+        cap = GEMINI_DAILY_IMAGE_CAP if is_image else GEMINI_DAILY_CHAT_CAP
+        current = _daily_counts.get(key, 0)
         if current >= cap:
             return False
-        store[today] = current + 1
+        _daily_counts[key] = current + 1
+        _save_daily_counts(dict(_daily_counts))
         return True
 
 
@@ -107,9 +132,9 @@ def _daily_gemini_usage() -> Dict[str, Any]:
     with _daily_lock:
         return {
             "date": today,
-            "image_requests_today": _daily_gemini_image_count.get(today, 0),
+            "image_requests_today": _daily_counts.get(f"{today}:image", 0),
             "image_daily_cap": GEMINI_DAILY_IMAGE_CAP,
-            "chat_requests_today": _daily_gemini_chat_count.get(today, 0),
+            "chat_requests_today": _daily_counts.get(f"{today}:chat", 0),
             "chat_daily_cap": GEMINI_DAILY_CHAT_CAP,
         }
 
