@@ -50,12 +50,16 @@ _ENV_LOCK = threading.Lock()
 
 # ── Rate limiting (in-memory, single-process safe) ────────────────────────────
 _RL_LOCK = threading.Lock()
-_rl_chat: Dict[str, List[float]] = defaultdict(list)   # user_id → timestamps
-_rl_image: Dict[str, List[float]] = defaultdict(list)  # user_id → timestamps
+_rl_chat: Dict[str, List[float]] = defaultdict(list)      # user_id → timestamps
+_rl_image: Dict[str, List[float]] = defaultdict(list)     # user_id → timestamps
+_rl_chat_ip: Dict[str, List[float]] = defaultdict(list)   # ip → timestamps (second layer)
+_rl_image_ip: Dict[str, List[float]] = defaultdict(list)  # ip → timestamps
 
-RATE_CHAT_MAX  = int(os.getenv("RATE_CHAT_MAX",  "30"))   # requests per window
-RATE_IMAGE_MAX = int(os.getenv("RATE_IMAGE_MAX", "6"))    # stricter for Gemini
-RATE_WINDOW_SEC = int(os.getenv("RATE_WINDOW_SEC", "60")) # rolling window
+RATE_CHAT_MAX     = int(os.getenv("RATE_CHAT_MAX",     "30"))  # per user per window
+RATE_IMAGE_MAX    = int(os.getenv("RATE_IMAGE_MAX",    "6"))   # per user per window (Gemini)
+RATE_CHAT_IP_MAX  = int(os.getenv("RATE_CHAT_IP_MAX",  "60"))  # per IP per window (loose)
+RATE_IMAGE_IP_MAX = int(os.getenv("RATE_IMAGE_IP_MAX", "12"))  # per IP per window (images)
+RATE_WINDOW_SEC   = int(os.getenv("RATE_WINDOW_SEC",   "60"))
 
 # ── Brute-force lockout ───────────────────────────────────────────────────────
 _BF_LOCK = threading.Lock()
@@ -149,6 +153,9 @@ async def add_security_headers(request: Request, call_next) -> Response:
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
@@ -232,9 +239,9 @@ def configured_users() -> Dict[str, str]:
 
 
 def require_auth(
-    request: Optional[Request] = None,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    request: Optional[Request] = None,
 ) -> str:
     ip = _client_ip(request) if request else "unknown"
     if _is_locked_out(ip):
@@ -265,7 +272,7 @@ def health(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    user_id = require_auth(request, x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, request)
     users = configured_users()
     return {
         "ok": True,
@@ -337,11 +344,15 @@ def chat(
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> ChatResponse:
-    user_id = require_auth(request, x_app_password, x_user_id)
+    user_id = require_auth(x_app_password, x_user_id, request)
+    ip = _client_ip(request)
     has_image = bool(req.image_base64)
-    if not _check_rate_limit(_rl_chat, user_id, RATE_CHAT_MAX, RATE_WINDOW_SEC):
+    # dual-layer rate limiting: per-user and per-IP (defeats user_id rotation)
+    if not _check_rate_limit(_rl_chat, user_id, RATE_CHAT_MAX, RATE_WINDOW_SEC) or \
+       not _check_rate_limit(_rl_chat_ip, ip, RATE_CHAT_IP_MAX, RATE_WINDOW_SEC):
         raise HTTPException(status_code=429, detail=f"請求過於頻繁，請稍後再試（每 {RATE_WINDOW_SEC} 秒限 {RATE_CHAT_MAX} 次）。")
-    if has_image and not _check_rate_limit(_rl_image, user_id, RATE_IMAGE_MAX, RATE_WINDOW_SEC):
+    if has_image and (not _check_rate_limit(_rl_image, user_id, RATE_IMAGE_MAX, RATE_WINDOW_SEC) or
+                      not _check_rate_limit(_rl_image_ip, ip, RATE_IMAGE_IP_MAX, RATE_WINDOW_SEC)):
         raise HTTPException(status_code=429, detail=f"圖片請求過於頻繁，請稍後再試（每 {RATE_WINDOW_SEC} 秒限 {RATE_IMAGE_MAX} 次）。")
     return _chat_impl(req, user_id=user_id)
 
@@ -384,8 +395,6 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             image_mime_type=req.image_mime_type or None,
         )
     except Exception as exc:
-        if gemini_lock_acquired:
-            _gemini_semaphore.release()
         traceback.print_exc()
         error_context = {
             "phase": "chat_once_detailed",
