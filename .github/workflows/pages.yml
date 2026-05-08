@@ -27,6 +27,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
       - name: Compile Python entrypoints
         run: python -m py_compile app.py Finance_Analysis_Agent_V581.py
 
