@@ -177,21 +177,21 @@ const responsePresets = {
     maxTokens: 768,
     historyTurns: 2,
     providerOrder:
-      "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia",
+      "cerebras,groq,nvidia,gemini,openrouter,cloudflare,fireworks,aws",
   },
   stable: {
     label: "穩定聊天",
     maxTokens: 2048,
     historyTurns: 4,
     providerOrder:
-      "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia",
+      "cerebras,groq,nvidia,gemini,openrouter,cloudflare,fireworks,aws",
   },
   deep: {
     label: "深度分析",
     maxTokens: 4096,
     historyTurns: 6,
     providerOrder:
-      "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia",
+      "cerebras,groq,nvidia,gemini,openrouter,cloudflare,fireworks,aws",
   },
 };
 const mistralModeDefaults = {

@@ -161,6 +161,15 @@ LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("LIGHT_WEB_SEARCH_MAX_CONTEXT
 GLOBAL_FACT_VALUE_MAX_CHARS = int(os.getenv("GLOBAL_FACT_VALUE_MAX_CHARS", "500"))
 WEB_SEARCH_SEARCH_DEPTH = os.getenv("WEB_SEARCH_SEARCH_DEPTH", "basic").strip() or "basic"
 WEB_SEARCH_TOPIC = os.getenv("WEB_SEARCH_TOPIC", "general").strip() or "general"
+_TAVILY_EXCLUDE_DOMAINS: List[str] = [
+    d.strip()
+    for d in os.getenv(
+        "TAVILY_EXCLUDE_DOMAINS",
+        "douyin.com,tiktok.com,instagram.com,twitter.com,x.com,facebook.com,threads.net,weibo.com,xiaohongshu.com,pinterest.com",
+    ).split(",")
+    if d.strip()
+]
+_TAVILY_MIN_SCORE: float = float(os.getenv("TAVILY_MIN_SCORE", "0.25"))
 WEB_SEARCH_PROVIDER_ORDER = [
     item.strip().lower()
     for item in os.getenv("WEB_SEARCH_PROVIDER_ORDER", "tavily,serper").split(",")
@@ -532,14 +541,16 @@ def search_intent_classifier(query: str) -> Dict[str, Any]:
 def _search_web_tavily(query: str) -> Dict[str, Any]:
     if not TAVILY_API_KEY:
         raise RuntimeError("TAVILY_API_KEY is not configured")
+    fetch_count = min(int(WEB_SEARCH_MAX_RESULTS) * 2, 10)
     payload = {
         "api_key": TAVILY_API_KEY,
         "query": strip_redundant(query or ""),
         "topic": WEB_SEARCH_TOPIC,
         "search_depth": WEB_SEARCH_SEARCH_DEPTH,
-        "max_results": int(WEB_SEARCH_MAX_RESULTS),
+        "max_results": fetch_count,
         "include_answer": False,
         "include_raw_content": False,
+        "exclude_domains": _TAVILY_EXCLUDE_DOMAINS,
     }
     response = requests.post(
         "https://api.tavily.com/search",
@@ -551,15 +562,21 @@ def _search_web_tavily(query: str) -> Dict[str, Any]:
         raise RuntimeError(f"Tavily error {response.status_code}: {body}")
     data = response.json() or {}
     normalized_results: List[Dict[str, Any]] = []
-    for item in (data.get("results") or [])[: int(WEB_SEARCH_MAX_RESULTS)]:
+    want = int(WEB_SEARCH_MAX_RESULTS)
+    for item in data.get("results") or []:
+        score = float(item.get("score") or 0)
+        if score < _TAVILY_MIN_SCORE:
+            continue
         normalized_results.append(
             {
                 "title": str(item.get("title") or "").strip(),
                 "url": str(item.get("url") or "").strip(),
                 "content": strip_redundant(str(item.get("content") or "")),
-                "score": item.get("score"),
+                "score": score,
             }
         )
+        if len(normalized_results) >= want:
+            break
     return {
         "provider": "tavily",
         "query": payload["query"],
