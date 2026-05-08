@@ -223,12 +223,12 @@ function mobileProviderOrderFor(modeKey) {
 
 function chatRequestTimeoutMsForMode(modeKey) {
   if (modeKey === "deep") {
-    return 95000;
+    return 130000;
   }
   if (modeKey === "stable") {
-    return 80000;
+    return 100000;
   }
-  return 60000;
+  return 65000;
 }
 
 function applyResponsePreset(shouldLog = true) {

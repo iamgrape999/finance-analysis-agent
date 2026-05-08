@@ -1283,9 +1283,9 @@ def _per_attempt_timeout_budget(response_mode: str, provider: Optional[str] = No
     base = _chat_timeout(provider or "")
     mode = (response_mode or "fast").strip().lower()
     if mode == "deep":
-        return max(base, 30)
-    if mode == "stable":
         return max(base, 20)
+    if mode == "stable":
+        return max(base, 15)
     return base
 
 
