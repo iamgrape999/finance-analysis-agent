@@ -156,6 +156,7 @@ WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "3"))
 WEB_SEARCH_TIMEOUT_SEC = int(os.getenv("WEB_SEARCH_TIMEOUT_SEC", "8"))
 WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("WEB_SEARCH_MAX_CONTEXT_CHARS", "2400"))
 LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS", "900"))
+GLOBAL_FACT_VALUE_MAX_CHARS = int(os.getenv("GLOBAL_FACT_VALUE_MAX_CHARS", "500"))
 WEB_SEARCH_SEARCH_DEPTH = os.getenv("WEB_SEARCH_SEARCH_DEPTH", "basic").strip() or "basic"
 WEB_SEARCH_TOPIC = os.getenv("WEB_SEARCH_TOPIC", "general").strip() or "general"
 WEB_SEARCH_PROVIDER_ORDER = [
@@ -912,7 +913,7 @@ def upsert_global_fact(key: str, value: str, user_id: Optional[str] = None) -> D
     k = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_key.strip())[:80]
     if not k:
         return facts
-    facts[k] = {"value": str(value).strip(), "ts": datetime.now().isoformat()}
+    facts[k] = {"value": str(value).strip()[:GLOBAL_FACT_VALUE_MAX_CHARS], "ts": datetime.now().isoformat()}
     return save_global_facts(facts, user_id)
 
 
@@ -929,7 +930,7 @@ def upsert_global_facts_from_text(text: str, user_id: Optional[str] = None) -> D
     facts = load_global_facts(user_id)
     now = datetime.now().isoformat()
     for key, value in re.findall(r"([A-Za-z][A-Za-z0-9_.-]{1,79})\s*=\s*([^\s,;，；。]+)", t):
-        facts[key] = {"value": value.strip()[:500], "ts": now}
+        facts[key] = {"value": value.strip()[:GLOBAL_FACT_VALUE_MAX_CHARS], "ts": now}
     return save_global_facts(facts, user_id)
 
 
@@ -1560,12 +1561,12 @@ def call_fireworks(prompt: str, max_tokens: int, temperature: float, timeout_ove
     return ModelReply(text=text, meta={"provider": "fireworks", "model": model, "usage": data.get("usage")})
 
 
-def list_fireworks_serverless_models(page_size: int = 100) -> List[Dict[str, Any]]:
+def list_fireworks_catalog_models(page_size: int = 100) -> List[Dict[str, Any]]:
     if not FIREWORKS_API_KEY:
         return []
     url = f"{FIREWORKS_BASE_URL.replace('/inference/v1', '')}/v1/accounts/fireworks/models"
     headers = {"Authorization": f"Bearer {FIREWORKS_API_KEY}"}
-    params = {"filter": "supports_serverless=true", "pageSize": int(page_size)}
+    params = {"pageSize": int(page_size)}
     resp = requests.get(url, headers=headers, params=params, timeout=max(20, _chat_timeout("fireworks")))
     if resp.status_code >= 400:
         raise RuntimeError(f"Fireworks List Models error {resp.status_code}: {resp.text[:300]}")
@@ -1587,12 +1588,43 @@ def list_fireworks_serverless_models(page_size: int = 100) -> List[Dict[str, Any
         name_l = str(name).lower()
         if any(part in name_l for part in blocked_name_parts):
             continue
+        supports_serverless = bool(item.get("supportsServerless") or item.get("supports_serverless"))
         out.append({
             "name": name,
             "display_name": item.get("displayName") or item.get("display_name") or name,
-            "supports_serverless": item.get("supportsServerless") or item.get("supports_serverless"),
+            "online_in_catalog": True,
+            "serverless_supported": supports_serverless,
+            "supports_serverless": supports_serverless,
         })
     return out
+
+
+def list_fireworks_serverless_models(page_size: int = 100) -> List[Dict[str, Any]]:
+    models = list_fireworks_catalog_models(page_size=page_size)
+    return [item for item in models if bool(item.get("serverless_supported"))]
+
+
+def fireworks_model_status(model_name: Optional[str], page_size: int = 100) -> Dict[str, Any]:
+    raw = str(model_name or "").strip()
+    status = {
+        "name": raw,
+        "online_in_catalog": False,
+        "serverless_supported": False,
+        "status_label": "not_in_account_list" if raw else "unset",
+    }
+    if not raw:
+        return status
+    for item in list_fireworks_catalog_models(page_size=page_size):
+        if str(item.get("name") or "").strip() != raw:
+            continue
+        status.update({
+            "display_name": item.get("display_name") or raw,
+            "online_in_catalog": bool(item.get("online_in_catalog")),
+            "serverless_supported": bool(item.get("serverless_supported")),
+            "status_label": "ok" if bool(item.get("serverless_supported")) else "catalog_online_not_serverless",
+        })
+        return status
+    return status
 
 
 def first_fireworks_serverless_model() -> str:

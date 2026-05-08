@@ -97,96 +97,61 @@ class ProviderOverrideTests(unittest.TestCase):
         _, kwargs = mock_chat.call_args
         self.assertEqual(kwargs["provider_order_override"], "mistral,openrouter")
         self.assertEqual(
-            kwargs["provider_models_override"],
+            kwargs["model_overrides"],
             {"mistral": "mistral-small-latest", "openrouter": "meta-llama/test"},
         )
         self.assertEqual(kwargs["user_id"], "hanli")
 
 
-class SessionAuthApiTests(unittest.TestCase):
+class BasicAuthApiTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app.app)
         self.old_app_password = app.APP_PASSWORD
         self.old_app_users_raw = app.APP_USERS_RAW
-        self.old_session_secret = app.SESSION_SECRET
-        self.old_session_ttl = app.SESSION_TTL_SEC
-        self.old_rate_limit_enabled = app.RATE_LIMIT_ENABLED
         app.APP_PASSWORD = "shared-secret"
         app.APP_USERS_RAW = ""
-        app.SESSION_SECRET = "test-session-secret"
-        app.SESSION_TTL_SEC = 3600
-        app.RATE_LIMIT_ENABLED = False
-        app._RATE_LIMIT_BUCKETS.clear()
 
     def tearDown(self):
         app.APP_PASSWORD = self.old_app_password
         app.APP_USERS_RAW = self.old_app_users_raw
-        app.SESSION_SECRET = self.old_session_secret
-        app.SESSION_TTL_SEC = self.old_session_ttl
-        app.RATE_LIMIT_ENABLED = self.old_rate_limit_enabled
-        app._RATE_LIMIT_BUCKETS.clear()
 
-    def test_session_login_returns_token_and_health_accepts_it(self):
-        response = self.client.post(
-            "/api/session",
-            json={"user_id": "hanli", "password": "shared-secret"},
+    def test_health_accepts_shared_password(self):
+        response = self.client.get(
+            "/api/health",
+            headers={
+                "X-User-Id": "hanli",
+                "X-App-Password": "shared-secret",
+            },
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data["ok"])
         self.assertEqual(data["user_id"], "hanli")
-        self.assertTrue(data["session_token"])
-        self.assertEqual(data["expires_in_sec"], 3600)
+        self.assertTrue(data["password_required"])
 
+    def test_health_rejects_wrong_shared_password(self):
         health = self.client.get(
             "/api/health",
             headers={
                 "X-User-Id": "hanli",
-                "X-Session-Token": data["session_token"],
+                "X-App-Password": "wrong-secret",
             },
         )
-        self.assertEqual(health.status_code, 200)
-        health_data = health.json()
-        self.assertEqual(health_data["user_id"], "hanli")
-        self.assertTrue(health_data["session_auth_enabled"])
-        self.assertEqual(health_data["session_ttl_sec"], 3600)
+        self.assertEqual(health.status_code, 401)
+        self.assertIn("invalid app password", health.json()["detail"].lower())
 
-    def test_session_token_rejects_wrong_user_header(self):
-        response = self.client.post(
-            "/api/session",
-            json={"user_id": "hanli", "password": "shared-secret"},
-        )
-        token = response.json()["session_token"]
-
+    def test_health_rejects_unknown_user_in_per_user_mode(self):
+        app.APP_PASSWORD = ""
+        app.APP_USERS_RAW = "hanli=aaa,cathy=bbb"
         health = self.client.get(
             "/api/health",
             headers={
-                "X-User-Id": "cathy",
-                "X-Session-Token": token,
+                "X-User-Id": "iris",
+                "X-App-Password": "aaa",
             },
         )
         self.assertEqual(health.status_code, 401)
-        self.assertIn("mismatch", health.json()["detail"].lower())
-
-    def test_expired_session_token_is_rejected(self):
-        original_time = app.time.time
-        try:
-            app.time.time = lambda: 1_000_000
-            token = app.create_session_token("hanli")
-            app.time.time = lambda: 1_000_000 + 3601
-
-            health = self.client.get(
-                "/api/health",
-                headers={
-                    "X-User-Id": "hanli",
-                    "X-Session-Token": token,
-                },
-            )
-        finally:
-            app.time.time = original_time
-
-        self.assertEqual(health.status_code, 401)
-        self.assertIn("expired", health.json()["detail"].lower())
+        self.assertIn("invalid user id or password", health.json()["detail"].lower())
 
 
 class StartupWarningTests(unittest.TestCase):
@@ -196,13 +161,13 @@ class StartupWarningTests(unittest.TestCase):
         try:
             app.APP_PASSWORD = ""
             app.APP_USERS_RAW = ""
-            with patch("builtins.print") as mock_print:
-                asyncio.run(app.startup_warn())
+            with patch("warnings.warn") as mock_warn:
+                asyncio.run(app._startup_warning())
         finally:
             app.APP_PASSWORD = old_app_password
             app.APP_USERS_RAW = old_app_users_raw
-        mock_print.assert_called()
-        self.assertIn("API is open to all users", mock_print.call_args[0][0])
+        mock_warn.assert_called()
+        self.assertIn("accessible without authentication", mock_warn.call_args[0][0])
 
 
 class SearchClassifierTests(unittest.TestCase):
@@ -233,6 +198,38 @@ class SearchClassifierTests(unittest.TestCase):
         decision = agent.search_intent_classifier("今天台灣股市收盤多少？")
         self.assertTrue(decision["must_search"])
         self.assertEqual(decision["priority"], "p1")
+
+
+class FireworksModelStatusTests(unittest.TestCase):
+    def test_fireworks_model_status_marks_catalog_and_serverless(self):
+        fake_models = [
+            {
+                "name": "accounts/fireworks/models/minimax-m2p7",
+                "display_name": "MiniMax M2.7",
+                "online_in_catalog": True,
+                "serverless_supported": True,
+            },
+            {
+                "name": "accounts/fireworks/models/legacy-model",
+                "display_name": "Legacy Model",
+                "online_in_catalog": True,
+                "serverless_supported": False,
+            },
+        ]
+        with patch.object(agent, "list_fireworks_catalog_models", return_value=fake_models):
+            ok_status = agent.fireworks_model_status("accounts/fireworks/models/minimax-m2p7")
+            legacy_status = agent.fireworks_model_status("accounts/fireworks/models/legacy-model")
+            missing_status = agent.fireworks_model_status("accounts/fireworks/models/missing")
+
+        self.assertTrue(ok_status["online_in_catalog"])
+        self.assertTrue(ok_status["serverless_supported"])
+        self.assertEqual(ok_status["status_label"], "ok")
+        self.assertTrue(legacy_status["online_in_catalog"])
+        self.assertFalse(legacy_status["serverless_supported"])
+        self.assertEqual(legacy_status["status_label"], "catalog_online_not_serverless")
+        self.assertFalse(missing_status["online_in_catalog"])
+        self.assertFalse(missing_status["serverless_supported"])
+        self.assertEqual(missing_status["status_label"], "not_in_account_list")
 
 
 class MaskingTests(unittest.TestCase):

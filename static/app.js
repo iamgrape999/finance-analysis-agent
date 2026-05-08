@@ -769,6 +769,7 @@ async function loadFireworksModels() {
       return;
     }
     const models = data.models || [];
+    const currentModel = data.current_model || {};
     if (!models.length) {
       log("fireworks model list returned no serverless models", "WARN");
       return;
@@ -779,9 +780,17 @@ async function loadFireworksModels() {
     select.innerHTML = "";
     const defaultOption = document.createElement("option");
     defaultOption.value = "";
-    defaultOption.textContent = modelDefaults.fireworks
+    let defaultLabel = modelDefaults.fireworks
       ? `使用 .env 預設：${modelDefaults.fireworks}`
       : "使用 .env 預設";
+    if (currentModel.name) {
+      if (!currentModel.online_in_catalog) {
+        defaultLabel += " [not in account list]";
+      } else if (!currentModel.serverless_supported) {
+        defaultLabel += " [catalog online, not serverless]";
+      }
+    }
+    defaultOption.textContent = defaultLabel;
     select.appendChild(defaultOption);
 
     const group = document.createElement("optgroup");
@@ -796,10 +805,37 @@ async function loadFireworksModels() {
     }
     select.appendChild(group);
 
+    if (currentModel.name && !currentModel.serverless_supported) {
+      const legacyGroup = document.createElement("optgroup");
+      legacyGroup.label = "目前預設模型狀態";
+      const option = document.createElement("option");
+      option.value = currentModel.name;
+      const currentLabel = currentModel.display_name && currentModel.display_name !== currentModel.name
+        ? `${currentModel.display_name} (${currentModel.name})`
+        : currentModel.name;
+      option.textContent = !currentModel.online_in_catalog
+        ? `${currentLabel} [deprecated or not in account list]`
+        : `${currentLabel} [online in catalog, not serverless]`;
+      legacyGroup.appendChild(option);
+      select.appendChild(legacyGroup);
+      log(
+        currentModel.online_in_catalog
+          ? `fireworks current model is online but not serverless: ${currentModel.name}`
+          : `fireworks current model is not in account list: ${currentModel.name}`,
+        "WARN"
+      );
+    }
+
     if ([...select.options].some((option) => option.value === previous)) {
       select.value = previous;
     }
     log(`loaded ${models.length} fireworks serverless models`, "OK");
+    if (currentModel.name) {
+      log(
+        `fireworks current model status: name=${currentModel.name}; online_in_catalog=${Boolean(currentModel.online_in_catalog)}; serverless_supported=${Boolean(currentModel.serverless_supported)}`,
+        "TRACE"
+      );
+    }
   } catch (err) {
     log(`fireworks model list request failed: ${err.message}`, "WARN");
   }

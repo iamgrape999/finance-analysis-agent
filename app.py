@@ -30,8 +30,10 @@ from Finance_Analysis_Agent_V581 import (
     delete_global_fact,
     delete_thread_memory,
     first_fireworks_serverless_model,
+    fireworks_model_status,
     list_thread_summaries,
     list_fireworks_serverless_models,
+    list_fireworks_catalog_models,
     list_nvidia_free_models,
     load_global_facts,
     provider_readiness,
@@ -485,13 +487,22 @@ def provider_models(
     provider: str,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
+    x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_auth(x_app_password, x_user_id)
+    require_auth(x_app_password, x_user_id, x_session_token)
     provider = provider.strip().lower()
     try:
         if provider == "fireworks":
-            models = list_fireworks_serverless_models()
-            return {"ok": True, "provider": "fireworks", "models": models}
+            catalog_models = list_fireworks_catalog_models()
+            serverless_models = [item for item in catalog_models if bool(item.get("serverless_supported"))]
+            current_model = fireworks_model_status(os.getenv("FIREWORKS_MODEL", FIREWORKS_MODEL))
+            return {
+                "ok": True,
+                "provider": "fireworks",
+                "models": serverless_models,
+                "catalog_models": catalog_models,
+                "current_model": current_model,
+            }
         if provider == "nvidia":
             models = list_nvidia_free_models()
             return {"ok": True, "provider": "nvidia", "models": models}
