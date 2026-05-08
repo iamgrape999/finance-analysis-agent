@@ -56,28 +56,55 @@ const attachButton = document.getElementById("attachButton");
 
 let attachedImage = null; // { base64: string, mimeType: string, dataUrl: string } | null
 
+const IMAGE_MAX_SIDE = 1920;
+const IMAGE_JPEG_QUALITY = 0.82;
+const IMAGE_MAX_B64_BYTES = 3_800_000; // ~2.85 MB raw → ~3.8 MB base64
+
+function compressImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+      if (width > IMAGE_MAX_SIDE || height > IMAGE_MAX_SIDE) {
+        if (width >= height) { height = Math.round(height * IMAGE_MAX_SIDE / width); width = IMAGE_MAX_SIDE; }
+        else { width = Math.round(width * IMAGE_MAX_SIDE / height); height = IMAGE_MAX_SIDE; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/jpeg", IMAGE_JPEG_QUALITY);
+      resolve({ base64: dataUrl.split(",")[1], mimeType: "image/jpeg", dataUrl, width, height });
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("圖片載入失敗")); };
+    img.src = objectUrl;
+  });
+}
+
 function handleImageFile(file) {
   if (!file) return;
-  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-  if (!allowedTypes.includes(file.type)) {
-    log(`不支援的圖片格式：${file.type}，請上傳 JPG/PNG/WEBP/GIF`, "WARN");
+  if (!file.type.startsWith("image/")) {
+    log(`不支援的檔案類型：${file.type || "未知"}，請選擇圖片檔案`, "WARN");
     return;
   }
-  if (file.size > 2 * 1024 * 1024) {
-    log(`圖片超過 2 MB（${(file.size / 1024 / 1024).toFixed(1)} MB），請縮小後再上傳`, "WARN");
-    alert("圖片超過 2 MB 限制，請縮小後再上傳。");
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const dataUrl = e.target.result;
-    const base64 = dataUrl.split(",")[1];
-    attachedImage = { base64, mimeType: file.type, dataUrl };
-    imagePreviewImg.src = dataUrl;
+  log(`圖片處理中：${file.name} (${file.type}, ${(file.size / 1024).toFixed(0)} KB) → 壓縮至最長邊 ${IMAGE_MAX_SIDE}px`, "TRACE");
+  compressImageFile(file).then((result) => {
+    const b64Bytes = result.base64.length;
+    if (b64Bytes > IMAGE_MAX_B64_BYTES) {
+      log(`壓縮後仍超過大小限制（${(b64Bytes / 1024 / 1024).toFixed(1)} MB base64），無法上傳`, "WARN");
+      alert("圖片壓縮後仍超過大小限制，請裁切後再試。");
+      return;
+    }
+    attachedImage = result;
+    imagePreviewImg.src = result.dataUrl;
     imagePreview.hidden = false;
-    log(`已附加圖片：${file.name} (${file.type}, ${(file.size / 1024).toFixed(0)} KB)`, "TRACE");
-  };
-  reader.readAsDataURL(file);
+    log(`已附加圖片：${file.name} → ${result.width}×${result.height}px JPEG，base64 ${(b64Bytes / 1024).toFixed(0)} KB`, "TRACE");
+  }).catch((err) => {
+    log(`圖片處理失敗：${err.message}`, "WARN");
+    alert(`圖片處理失敗：${err.message}`);
+  });
 }
 
 function removeImage() {
