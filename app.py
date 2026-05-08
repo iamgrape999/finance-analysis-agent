@@ -69,6 +69,11 @@ BF_MAX_FAILURES  = int(os.getenv("BF_MAX_FAILURES",  "10"))
 BF_WINDOW_SEC    = int(os.getenv("BF_WINDOW_SEC",    "300"))  # 5-minute window
 BF_LOCKOUT_SEC   = int(os.getenv("BF_LOCKOUT_SEC",   "600"))  # 10-minute lockout
 
+# ── Sticky provider per thread (in-memory, resets on restart) ────────────────
+_STICKY_LOCK = threading.Lock()
+_thread_sticky: Dict[str, str] = {}   # thread_id → last successful provider
+_STICKY_MAX_THREADS = 500             # cap memory usage
+
 # ── Gemini concurrency cap ────────────────────────────────────────────────────
 GEMINI_MAX_CONCURRENT = int(os.getenv("GEMINI_MAX_CONCURRENT", "2"))
 _gemini_semaphore = threading.Semaphore(GEMINI_MAX_CONCURRENT)
@@ -441,7 +446,16 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
         ))
         effective_provider_order = vision_providers
     else:
-        effective_provider_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
+        base_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
+        with _STICKY_LOCK:
+            sticky = _thread_sticky.get(req.thread_id)
+        if sticky:
+            order_list = [p.strip() for p in base_order.split(",") if p.strip()]
+            if sticky in order_list and order_list[0] != sticky:
+                order_list = [sticky] + [p for p in order_list if p != sticky]
+            effective_provider_order = ",".join(order_list)
+        else:
+            effective_provider_order = base_order
     mode_default_tokens = MODE_DEFAULT_MAX_TOKENS.get(req.response_mode, MODE_DEFAULT_MAX_TOKENS["fast"])
     effective_max_tokens = int(req.max_tokens or mode_default_tokens)
     if enforce_min_tokens:
@@ -492,6 +506,12 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
         if gemini_lock_acquired:
             _gemini_semaphore.release()
     meta = result.get("meta", {}) if isinstance(result, dict) else {}
+    successful_provider = meta.get("provider", "")
+    if successful_provider and not has_image:
+        with _STICKY_LOCK:
+            if len(_thread_sticky) >= _STICKY_MAX_THREADS:
+                _thread_sticky.clear()
+            _thread_sticky[req.thread_id] = successful_provider
     return ChatResponse(
         thread_id=req.thread_id,
         reply=str(result.get("reply", "")) if isinstance(result, dict) else "",
