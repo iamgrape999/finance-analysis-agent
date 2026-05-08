@@ -11,7 +11,9 @@ services:
       - key: MEMORY_ROOT
         value: /tmp/memory
       - key: AGENT_PROVIDER_ORDER
-        value: openrouter,fireworks,gemini,cloudflare,groq,aws
+        value: cerebras,groq,mistral,openrouter,fireworks,gemini,cloudflare,aws,nvidia
+      - key: MISTRAL_TIMEOUT_SEC
+        value: "30"
       - key: DEBUG
         value: false
       - key: OPENROUTER_API_KEY

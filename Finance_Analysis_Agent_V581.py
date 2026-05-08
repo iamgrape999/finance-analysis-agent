@@ -128,7 +128,7 @@ PROVIDER_READ_TIMEOUTS = {
     "cerebras": int(os.getenv("CEREBRAS_TIMEOUT_SEC", "5")),
     "groq": int(os.getenv("GROQ_TIMEOUT_SEC", "8")),
     "gemini": int(os.getenv("GEMINI_TIMEOUT_SEC", "25")),
-    "mistral": int(os.getenv("MISTRAL_TIMEOUT_SEC", "6")),
+    "mistral": int(os.getenv("MISTRAL_TIMEOUT_SEC", "30")),
     "openrouter": OPENROUTER_TIMEOUT_SEC,
     "cloudflare": int(os.getenv("CLOUDFLARE_TIMEOUT_SEC", "10")),
     "fireworks": int(os.getenv("FIREWORKS_TIMEOUT_SEC", "15")),
@@ -1280,8 +1280,13 @@ def _continue_round_limit(response_mode: str) -> int:
 
 
 def _per_attempt_timeout_budget(response_mode: str, provider: Optional[str] = None) -> int:
-    del response_mode
-    return _chat_timeout(provider or "")
+    base = _chat_timeout(provider or "")
+    mode = (response_mode or "fast").strip().lower()
+    if mode == "deep":
+        return max(base, 30)
+    if mode == "stable":
+        return max(base, 20)
+    return base
 
 
 def _effective_timeout(provider: str, timeout_override: Optional[float] = None) -> int:

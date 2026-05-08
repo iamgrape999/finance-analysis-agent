@@ -763,7 +763,7 @@ async function loadFireworksModels() {
   if (!select) return;
   try {
     const res = await fetch(apiUrl("/api/provider-models/fireworks"), { headers: authHeaders() });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({ ok: false, error: "JSON parse failed", models: [] }));
     if (!data.ok) {
       log(`fireworks model list failed: ${data.error || "unknown error"}`, "WARN");
       return;
