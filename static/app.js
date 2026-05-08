@@ -170,7 +170,7 @@ const responseModeKey = "finance_agent_response_mode";
 const webSearchProviderKey = "finance_agent_web_search_provider";
 const forceWebSearchKey = "finance_agent_force_web_search";
 const themeModeKey = "finance_agent_theme_mode";
-const FRONTEND_BUILD = "2026-04-21-route-budget-v2";
+const FRONTEND_BUILD = "2026-05-08-no-mistral";
 const responsePresets = {
   fast: {
     label: "快速短答",
@@ -335,12 +335,12 @@ function currentResponsePreset() {
 
 function mobileProviderOrderFor(modeKey) {
   if (modeKey === "deep") {
-    return "cerebras,mistral,gemini,openrouter,fireworks,groq,cloudflare,aws,nvidia";
+    return "cerebras,groq,nvidia,gemini,openrouter,cloudflare,fireworks,aws";
   }
   if (modeKey === "stable") {
-    return "cerebras,groq,mistral,gemini,openrouter,fireworks,cloudflare,aws,nvidia";
+    return "cerebras,groq,nvidia,gemini,openrouter,cloudflare,fireworks,aws";
   }
-  return "cerebras,groq,mistral,gemini,openrouter,fireworks,aws,nvidia";
+  return "cerebras,groq,nvidia,gemini,openrouter,cloudflare,fireworks,aws";
 }
 
 function chatRequestTimeoutMsForMode(modeKey) {
