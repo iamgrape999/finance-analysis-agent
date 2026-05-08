@@ -14,6 +14,7 @@ under MEMORY_ROOT so Render can mount a persistent disk there.
 
 from __future__ import annotations
 
+import base64
 import concurrent.futures
 import json
 import os
@@ -1690,10 +1691,20 @@ def call_gemini(prompt: str, max_tokens: int, temperature: float, timeout_overri
 
     client = genai.Client(api_key=GEMINI_API_KEY)
 
+    img_b64: str = getattr(_CALL_CONTEXT, "image_b64", None) or ""
+    img_mime: str = getattr(_CALL_CONTEXT, "image_mime", None) or "image/jpeg"
+
     def _do_call() -> Any:
+        if img_b64:
+            contents = [
+                types.Part.from_bytes(data=base64.b64decode(img_b64), mime_type=img_mime),
+                types.Part.from_text(text=prompt),
+            ]
+        else:
+            contents = prompt
         return client.models.generate_content(
             model=model,
-            contents=prompt,
+            contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_POLICY,
                 max_output_tokens=int(max_tokens),
@@ -2206,10 +2217,14 @@ def chat_once_detailed(
     force_web_search: bool = False,
     model_overrides: Optional[Dict[str, str]] = None,
     provider_order_override: Optional[str] = None,
+    image_base64: Optional[str] = None,
+    image_mime_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     del min_tokens, summary_chars
     _CALL_CONTEXT.model_overrides = {k: v.strip() for k, v in (model_overrides or {}).items() if v and v.strip()}
     _CALL_CONTEXT.provider_order_override = (provider_order_override or "").strip() or None
+    _CALL_CONTEXT.image_b64 = (image_base64 or "").strip() or None
+    _CALL_CONTEXT.image_mime = (image_mime_type or "image/jpeg").strip()
     user_text = strip_redundant(user_text_or_prompt)
     if not user_text:
         return {"reply": "請輸入問題。", "meta": {"provider": "local"}}
@@ -2297,6 +2312,8 @@ def chat_once_detailed(
     finally:
         _CALL_CONTEXT.model_overrides = None
         _CALL_CONTEXT.provider_order_override = None
+        _CALL_CONTEXT.image_b64 = None
+        _CALL_CONTEXT.image_mime = None
     latency_s = round(time.perf_counter() - t0, 3)
     assistant_text = strip_redundant(clean_model_output(reply.text))
     meta = dict(reply.meta or {})

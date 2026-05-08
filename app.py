@@ -17,6 +17,7 @@ from Finance_Analysis_Agent_V581 import (
     CF_MODEL,
     CEREBRAS_MODEL,
     FIREWORKS_MODEL,
+    GEMINI_API_KEY,
     GEMINI_MODEL,
     GROQ_MODEL,
     MISTRAL_MODEL,
@@ -106,6 +107,8 @@ class ChatRequest(BaseModel):
     model_overrides: Dict[str, str] = Field(default_factory=dict)
     web_search_provider: str = Field(default="auto", pattern="^(auto|tavily|serper)$")
     force_web_search: bool = False
+    image_base64: Optional[str] = Field(default=None, max_length=4_000_000)
+    image_mime_type: Optional[str] = Field(default=None, pattern="^image/(jpeg|png|webp|gif)$")
 
 
 class ChatResponse(BaseModel):
@@ -272,7 +275,13 @@ def chat(
 
 
 def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) -> ChatResponse:
-    effective_provider_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
+    has_image = bool(req.image_base64)
+    if has_image:
+        if not GEMINI_API_KEY:
+            raise HTTPException(status_code=400, detail="圖片分析需要 Gemini API 金鑰，請聯絡管理員設定。")
+        effective_provider_order = "gemini"
+    else:
+        effective_provider_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
     mode_default_tokens = MODE_DEFAULT_MAX_TOKENS.get(req.response_mode, MODE_DEFAULT_MAX_TOKENS["fast"])
     effective_max_tokens = int(req.max_tokens or mode_default_tokens)
     if enforce_min_tokens:
@@ -294,6 +303,8 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             force_web_search=req.force_web_search,
             model_overrides=req.model_overrides,
             provider_order_override=effective_provider_order,
+            image_base64=req.image_base64 or None,
+            image_mime_type=req.image_mime_type or None,
         )
     except Exception as exc:
         traceback.print_exc()

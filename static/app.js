@@ -48,6 +48,53 @@ let passwordUserInput = document.getElementById("passwordUserInput");
 const passwordApiBaseInput = document.getElementById("passwordApiBaseInput");
 const passwordButton = document.getElementById("passwordButton");
 const passwordError = document.getElementById("passwordError");
+const imageInput = document.getElementById("imageInput");
+const imagePreview = document.getElementById("imagePreview");
+const imagePreviewImg = document.getElementById("imagePreviewImg");
+const removeImageBtn = document.getElementById("removeImageBtn");
+const attachButton = document.getElementById("attachButton");
+
+let attachedImage = null; // { base64: string, mimeType: string, dataUrl: string } | null
+
+function handleImageFile(file) {
+  if (!file) return;
+  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+  if (!allowedTypes.includes(file.type)) {
+    log(`不支援的圖片格式：${file.type}，請上傳 JPG/PNG/WEBP/GIF`, "WARN");
+    return;
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    log(`圖片超過 2 MB（${(file.size / 1024 / 1024).toFixed(1)} MB），請縮小後再上傳`, "WARN");
+    alert("圖片超過 2 MB 限制，請縮小後再上傳。");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const dataUrl = e.target.result;
+    const base64 = dataUrl.split(",")[1];
+    attachedImage = { base64, mimeType: file.type, dataUrl };
+    imagePreviewImg.src = dataUrl;
+    imagePreview.hidden = false;
+    log(`已附加圖片：${file.name} (${file.type}, ${(file.size / 1024).toFixed(0)} KB)`, "TRACE");
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeImage() {
+  attachedImage = null;
+  imagePreview.hidden = true;
+  imagePreviewImg.src = "";
+  imageInput.value = "";
+}
+
+attachButton.addEventListener("click", () => imageInput.click());
+
+imageInput.addEventListener("change", () => {
+  const file = imageInput.files?.[0];
+  if (file) handleImageFile(file);
+});
+
+removeImageBtn.addEventListener("click", removeImage);
 if (!passwordUserInput) {
   passwordUserInput = document.createElement("input");
   passwordUserInput.id = "passwordUserInput";
@@ -874,7 +921,11 @@ async function sendMessage(message, endpoint = "/api/chat") {
   if (firstProvider && providerReadiness[firstProvider] === false) {
     log(`${firstProvider} is selected first but not connected; backend will fail over to the next ready provider`, "WARN");
   }
-  log(`calling ${endpoint}; user=${userId}; thread=${threadId}; provider_order=${effectiveProviderOrder || "backend"}`, "CALL");
+  const imageSnapshot = attachedImage;
+  if (imageSnapshot) {
+    log(`image attached: mimeType=${imageSnapshot.mimeType}; forcing provider_order=gemini`, "TRACE");
+  }
+  log(`calling ${endpoint}; user=${userId}; thread=${threadId}; provider_order=${imageSnapshot ? "gemini" : (effectiveProviderOrder || "backend")}`, "CALL");
   log(`web search request: provider=${webSearchProviderMode}; force=${forceWebSearchInput.checked}`, "TRACE");
 
   let timeoutId = null;
@@ -901,10 +952,11 @@ async function sendMessage(message, endpoint = "/api/chat") {
         history_turns: effectiveHistoryTurns,
         response_mode: responseModeInput.value,
         disable_auto_continue: disableAutoContinue,
-        provider_order: effectiveProviderOrder,
+        provider_order: imageSnapshot ? "gemini" : effectiveProviderOrder,
         model_overrides: collectModelOverrides(),
         web_search_provider: webSearchProviderMode,
-        force_web_search: forceWebSearchInput.checked
+        force_web_search: forceWebSearchInput.checked,
+        ...(imageSnapshot ? { image_base64: imageSnapshot.base64, image_mime_type: imageSnapshot.mimeType } : {})
       })
     });
 
@@ -961,6 +1013,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
     }
     forceWebSearchInput.checked = false;
     localStorage.setItem(forceWebSearchKey, "false");
+    removeImage();
     setBusy(false);
     input.focus();
   }
