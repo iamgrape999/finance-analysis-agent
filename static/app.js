@@ -5,7 +5,9 @@ const temperatureInput = document.getElementById("temperatureInput");
 const providerOrderInput = document.getElementById("providerOrderInput");
 const responseModeInput = document.getElementById("responseModeInput");
 const apiBaseInput = document.getElementById("apiBaseInput");
-const webSearchProviderButtons = document.getElementById("webSearchProviderButtons");
+const webSearchProviderButtons = document.getElementById(
+  "webSearchProviderButtons",
+);
 const forceWebSearchInput = document.getElementById("forceWebSearchInput");
 const toggleThemeButton = document.getElementById("toggleThemeButton");
 const toggleSidebarButton = document.getElementById("toggleSidebarButton");
@@ -23,7 +25,7 @@ const modelInputs = {
   gemini: document.getElementById("geminiModelInput"),
   cloudflare: document.getElementById("cloudflareModelInput"),
   groq: document.getElementById("groqModelInput"),
-  aws: document.getElementById("awsModelInput")
+  aws: document.getElementById("awsModelInput"),
 };
 const threadInput = document.getElementById("threadInput");
 const messages = document.getElementById("messages");
@@ -38,8 +40,12 @@ const refreshThreadsButton = document.getElementById("refreshThreadsButton");
 const threadList = document.getElementById("threadList");
 const globalMemoryList = document.getElementById("globalMemoryList");
 const globalMemoryKeyInput = document.getElementById("globalMemoryKeyInput");
-const globalMemoryValueInput = document.getElementById("globalMemoryValueInput");
-const saveGlobalMemoryButton = document.getElementById("saveGlobalMemoryButton");
+const globalMemoryValueInput = document.getElementById(
+  "globalMemoryValueInput",
+);
+const saveGlobalMemoryButton = document.getElementById(
+  "saveGlobalMemoryButton",
+);
 const passwordGate = document.getElementById("passwordGate");
 const protectedApp = document.getElementById("protectedApp");
 const mainWorkspace = document.getElementById("mainWorkspace");
@@ -68,17 +74,31 @@ function compressImageFile(file) {
       URL.revokeObjectURL(objectUrl);
       let { width, height } = img;
       if (width > IMAGE_MAX_SIDE || height > IMAGE_MAX_SIDE) {
-        if (width >= height) { height = Math.round(height * IMAGE_MAX_SIDE / width); width = IMAGE_MAX_SIDE; }
-        else { width = Math.round(width * IMAGE_MAX_SIDE / height); height = IMAGE_MAX_SIDE; }
+        if (width >= height) {
+          height = Math.round((height * IMAGE_MAX_SIDE) / width);
+          width = IMAGE_MAX_SIDE;
+        } else {
+          width = Math.round((width * IMAGE_MAX_SIDE) / height);
+          height = IMAGE_MAX_SIDE;
+        }
       }
       const canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
       canvas.getContext("2d").drawImage(img, 0, 0, width, height);
       const dataUrl = canvas.toDataURL("image/jpeg", IMAGE_JPEG_QUALITY);
-      resolve({ base64: dataUrl.split(",")[1], mimeType: "image/jpeg", dataUrl, width, height });
+      resolve({
+        base64: dataUrl.split(",")[1],
+        mimeType: "image/jpeg",
+        dataUrl,
+        width,
+        height,
+      });
     };
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("圖片載入失敗")); };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("圖片載入失敗"));
+    };
     img.src = objectUrl;
   });
 }
@@ -89,22 +109,33 @@ function handleImageFile(file) {
     log(`不支援的檔案類型：${file.type || "未知"}，請選擇圖片檔案`, "WARN");
     return;
   }
-  log(`圖片處理中：${file.name} (${file.type}, ${(file.size / 1024).toFixed(0)} KB) → 壓縮至最長邊 ${IMAGE_MAX_SIDE}px`, "TRACE");
-  compressImageFile(file).then((result) => {
-    const b64Bytes = result.base64.length;
-    if (b64Bytes > IMAGE_MAX_B64_BYTES) {
-      log(`壓縮後仍超過大小限制（${(b64Bytes / 1024 / 1024).toFixed(1)} MB base64），無法上傳`, "WARN");
-      alert("圖片壓縮後仍超過大小限制，請裁切後再試。");
-      return;
-    }
-    attachedImage = result;
-    imagePreviewImg.src = result.dataUrl;
-    imagePreview.hidden = false;
-    log(`已附加圖片：${file.name} → ${result.width}×${result.height}px JPEG，base64 ${(b64Bytes / 1024).toFixed(0)} KB`, "TRACE");
-  }).catch((err) => {
-    log(`圖片處理失敗：${err.message}`, "WARN");
-    alert(`圖片處理失敗：${err.message}`);
-  });
+  log(
+    `圖片處理中：${file.name} (${file.type}, ${(file.size / 1024).toFixed(0)} KB) → 壓縮至最長邊 ${IMAGE_MAX_SIDE}px`,
+    "TRACE",
+  );
+  compressImageFile(file)
+    .then((result) => {
+      const b64Bytes = result.base64.length;
+      if (b64Bytes > IMAGE_MAX_B64_BYTES) {
+        log(
+          `壓縮後仍超過大小限制（${(b64Bytes / 1024 / 1024).toFixed(1)} MB base64），無法上傳`,
+          "WARN",
+        );
+        alert("圖片壓縮後仍超過大小限制，請裁切後再試。");
+        return;
+      }
+      attachedImage = result;
+      imagePreviewImg.src = result.dataUrl;
+      imagePreview.hidden = false;
+      log(
+        `已附加圖片：${file.name} → ${result.width}×${result.height}px JPEG，base64 ${(b64Bytes / 1024).toFixed(0)} KB`,
+        "TRACE",
+      );
+    })
+    .catch((err) => {
+      log(`圖片處理失敗：${err.message}`, "WARN");
+      alert(`圖片處理失敗：${err.message}`);
+    });
 }
 
 function removeImage() {
@@ -145,25 +176,28 @@ const responsePresets = {
     label: "快速短答",
     maxTokens: 768,
     historyTurns: 2,
-    providerOrder: "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia"
+    providerOrder:
+      "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia",
   },
   stable: {
     label: "穩定聊天",
     maxTokens: 2048,
     historyTurns: 4,
-    providerOrder: "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia"
+    providerOrder:
+      "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia",
   },
   deep: {
     label: "深度分析",
     maxTokens: 4096,
     historyTurns: 6,
-    providerOrder: "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia"
-  }
+    providerOrder:
+      "cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia",
+  },
 };
 const mistralModeDefaults = {
   fast: "mistral-small-latest",
   stable: "mistral-medium-latest",
-  deep: "mistral-large-latest"
+  deep: "mistral-large-latest",
 };
 let userId = sanitizeUserId(localStorage.getItem(userIdKey) || "");
 passwordUserInput.value = userId;
@@ -176,18 +210,26 @@ let providerReadiness = {};
 let modelDefaults = {};
 let appPassword = sessionStorage.getItem(passwordKey) || "";
 responseModeInput.value = localStorage.getItem(responseModeKey) || "fast";
-let webSearchProviderMode = localStorage.getItem(webSearchProviderKey) || "auto";
-forceWebSearchInput.checked = localStorage.getItem(forceWebSearchKey) === "true";
+let webSearchProviderMode =
+  localStorage.getItem(webSearchProviderKey) || "auto";
+forceWebSearchInput.checked =
+  localStorage.getItem(forceWebSearchKey) === "true";
 let themeMode = localStorage.getItem(themeModeKey) || "";
 let lastMobileLayoutState = isMobileLayout();
 
 function makeThreadId() {
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:.TZ]/g, "")
+    .slice(0, 14);
   return `WEB_${stamp}_${crypto.randomUUID().slice(0, 6)}`;
 }
 
 function sanitizeUserId(value) {
-  return String(value || "").trim().replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80);
+  return String(value || "")
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .slice(0, 80);
 }
 
 function threadStorageKey() {
@@ -195,7 +237,9 @@ function threadStorageKey() {
 }
 
 function preferredThemeMode() {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
 function effectiveThemeMode() {
@@ -207,8 +251,12 @@ function applyTheme() {
   document.body.dataset.theme = mode;
   if (toggleThemeButton) {
     toggleThemeButton.textContent = mode === "dark" ? "日間" : "夜間";
-    toggleThemeButton.setAttribute("aria-label", mode === "dark" ? "切換到日間模式" : "切換到夜間模式");
-    toggleThemeButton.title = mode === "dark" ? "切換到日間模式" : "切換到夜間模式";
+    toggleThemeButton.setAttribute(
+      "aria-label",
+      mode === "dark" ? "切換到日間模式" : "切換到夜間模式",
+    );
+    toggleThemeButton.title =
+      mode === "dark" ? "切換到日間模式" : "切換到夜間模式";
   }
 }
 
@@ -264,7 +312,7 @@ function friendlyNetworkError(err) {
       "2. 只填 Render 根網址，不要加 /api/health 或 /api/chat。",
       "3. iPhone Safari 可直接打開 Render 的 /api/health。",
       "4. Render Free 可能在冷啟動，等 30-60 秒後重試。",
-      `原始錯誤：${message}`
+      `原始錯誤：${message}`,
     ].join("\n");
   }
   return message;
@@ -309,11 +357,16 @@ function applyResponsePreset(shouldLog = true) {
   const preset = currentResponsePreset();
   maxTokensInput.value = String(preset.maxTokens);
   if (!providerOrderInput.value) {
-    providerOrderInput.value = isMobileLayout() ? mobileProviderOrderFor(responseModeInput.value) : preset.providerOrder;
+    providerOrderInput.value = isMobileLayout()
+      ? mobileProviderOrderFor(responseModeInput.value)
+      : preset.providerOrder;
   }
   localStorage.setItem(responseModeKey, responseModeInput.value);
   if (shouldLog) {
-    log(`response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}; provider_order=${providerOrderInput.value || "backend"}`, "DEBUG");
+    log(
+      `response mode: ${preset.label}; max_tokens=${preset.maxTokens}; history_turns=${preset.historyTurns}; provider_order=${providerOrderInput.value || "backend"}`,
+      "DEBUG",
+    );
   }
 }
 
@@ -337,15 +390,24 @@ function setUnlocked(unlocked) {
 
 function updateWebSearchProviderButtons() {
   if (!webSearchProviderButtons) return;
-  for (const button of webSearchProviderButtons.querySelectorAll("[data-search-provider]")) {
-    button.classList.toggle("is-active", button.dataset.searchProvider === webSearchProviderMode);
+  for (const button of webSearchProviderButtons.querySelectorAll(
+    "[data-search-provider]",
+  )) {
+    button.classList.toggle(
+      "is-active",
+      button.dataset.searchProvider === webSearchProviderMode,
+    );
   }
 }
 
 function formatUsage(usage) {
   if (!usage || typeof usage !== "object") return "";
-  const prompt = usage.prompt_tokens ?? usage.input_tokens ?? usage.prompt_token_count;
-  const completion = usage.completion_tokens ?? usage.output_tokens ?? usage.candidates_token_count;
+  const prompt =
+    usage.prompt_tokens ?? usage.input_tokens ?? usage.prompt_token_count;
+  const completion =
+    usage.completion_tokens ??
+    usage.output_tokens ??
+    usage.candidates_token_count;
   const total = usage.total_tokens ?? usage.total_token_count;
   const parts = [];
   if (prompt !== undefined) parts.push(`prompt=${prompt}`);
@@ -359,11 +421,19 @@ function summarizeWebSearchDecision(webSearch) {
   if (!decision || typeof decision !== "object") return "";
   const reason = decision.reason || "";
   const priority = decision.priority ? `priority=${decision.priority}` : "";
-  const confidence = typeof decision.confidence === "number" ? `confidence=${decision.confidence}` : "";
+  const confidence =
+    typeof decision.confidence === "number"
+      ? `confidence=${decision.confidence}`
+      : "";
   const provider = webSearch?.provider ? `provider=${webSearch.provider}` : "";
-  const override = webSearch?.provider_override && webSearch.provider_override !== "auto" ? `override=${webSearch.provider_override}` : "";
+  const override =
+    webSearch?.provider_override && webSearch.provider_override !== "auto"
+      ? `override=${webSearch.provider_override}`
+      : "";
   const forced = webSearch?.forced ? "forced=true" : "";
-  return [reason, priority, confidence, provider, override, forced].filter(Boolean).join(" | ");
+  return [reason, priority, confidence, provider, override, forced]
+    .filter(Boolean)
+    .join(" | ");
 }
 
 function buildWebSourcesElement(webSearch) {
@@ -421,7 +491,9 @@ function buildWebSearchBadge(webSearch) {
   badge.className = "message-search-badge";
   const providerLabel = String(webSearch.provider || "").trim();
   badge.textContent = `Web search: ${providerLabel}`;
-  badge.title = summarizeWebSearchDecision(webSearch) || `web search provider=${providerLabel}`;
+  badge.title =
+    summarizeWebSearchDecision(webSearch) ||
+    `web search provider=${providerLabel}`;
   return badge;
 }
 
@@ -445,8 +517,10 @@ function addMessage(role, text, meta = {}) {
   if (meta.model) metaParts.push(`model=${meta.model}`);
   const usageText = formatUsage(meta.usage);
   if (usageText) metaParts.push(`tokens: ${usageText}`);
-  if (meta.latency_s !== undefined && meta.latency_s !== null) metaParts.push(`time=${meta.latency_s}s`);
-  if (meta.provider_attempts?.length) metaParts.push(`attempts=${meta.provider_attempts.join(">")}`);
+  if (meta.latency_s !== undefined && meta.latency_s !== null)
+    metaParts.push(`time=${meta.latency_s}s`);
+  if (meta.provider_attempts?.length)
+    metaParts.push(`attempts=${meta.provider_attempts.join(">")}`);
   if (meta.continue_rounds) metaParts.push(`continue=${meta.continue_rounds}`);
   if (metaParts.length) {
     const metaEl = document.createElement("div");
@@ -478,10 +552,12 @@ function logProviderTrace(providerTrace) {
       `tokens=${item.prompt_tokens ?? "?"}`,
       `chars=${item.prompt_chars ?? "?"}`,
       `bytes=${item.estimated_request_bytes ?? "?"}`,
-      `elapsed=${item.elapsed_ms ?? 0}ms`
+      `elapsed=${item.elapsed_ms ?? 0}ms`,
     ];
-    if (item.attempt_timeout_sec !== undefined) parts.push(`attempt_timeout=${item.attempt_timeout_sec}s`);
-    if (item.remaining_budget_sec !== undefined) parts.push(`budget_left=${item.remaining_budget_sec}s`);
+    if (item.attempt_timeout_sec !== undefined)
+      parts.push(`attempt_timeout=${item.attempt_timeout_sec}s`);
+    if (item.remaining_budget_sec !== undefined)
+      parts.push(`budget_left=${item.remaining_budget_sec}s`);
     if (item.reason) parts.push(`reason=${item.reason}`);
     log(parts.join(" | "), item.status === "ok" ? "TRACE" : "WARN");
   }
@@ -497,7 +573,10 @@ function logWebSearch(webSearch) {
     log(`web search error: ${webSearch.error}`, "WARN");
   }
   if (webSearch.provider_override && webSearch.provider_override !== "auto") {
-    log(`web search override requested: ${webSearch.provider_override}`, "TRACE");
+    log(
+      `web search override requested: ${webSearch.provider_override}`,
+      "TRACE",
+    );
   }
   if (webSearch.used) {
     if (webSearch.provider) {
@@ -506,8 +585,14 @@ function logWebSearch(webSearch) {
     if (Array.isArray(webSearch.attempts) && webSearch.attempts.length) {
       log(`web search attempts: ${webSearch.attempts.join(">")}`, "TRACE");
     }
-    if (Array.isArray(webSearch.fallback_errors) && webSearch.fallback_errors.length) {
-      log(`web search fallback: ${webSearch.fallback_errors.join(" ; ")}`, "WARN");
+    if (
+      Array.isArray(webSearch.fallback_errors) &&
+      webSearch.fallback_errors.length
+    ) {
+      log(
+        `web search fallback: ${webSearch.fallback_errors.join(" ; ")}`,
+        "WARN",
+      );
     }
     const titles = (Array.isArray(webSearch.results) ? webSearch.results : [])
       .slice(0, 5)
@@ -545,7 +630,8 @@ function collectModelOverrides() {
     }
   }
   if (!out.mistral) {
-    out.mistral = mistralModeDefaults[responseModeInput.value] || mistralModeDefaults.fast;
+    out.mistral =
+      mistralModeDefaults[responseModeInput.value] || mistralModeDefaults.fast;
   }
   return out;
 }
@@ -563,14 +649,17 @@ function effectiveProviderOrderForRequest() {
   if (explicitOrder) {
     return explicitOrder;
   }
-  return isMobileLayout() ? mobileProviderOrderFor(responseModeInput.value) : null;
+  return isMobileLayout()
+    ? mobileProviderOrderFor(responseModeInput.value)
+    : null;
 }
 
 async function checkHealth() {
   try {
     if (!userId) {
       setUnlocked(false);
-      passwordError.textContent = "請先輸入 User ID，系統會依 User ID 隔離歷史對話與全域記憶。";
+      passwordError.textContent =
+        "請先輸入 User ID，系統會依 User ID 隔離歷史對話與全域記憶。";
       log("missing user id", "WARN");
       return;
     }
@@ -592,8 +681,12 @@ async function checkHealth() {
     }
     if (data.user_required !== true || data.user_id !== userId) {
       setUnlocked(false);
-      passwordError.textContent = "後端尚未更新到 User ID 隔離版本，請重啟本機 uvicorn 或重新部署 Render 後再測。";
-      log(`backend user scope mismatch; expected=${userId} got=${data.user_id || "none"} user_required=${data.user_required}`, "FAIL");
+      passwordError.textContent =
+        "後端尚未更新到 User ID 隔離版本，請重啟本機 uvicorn 或重新部署 Render 後再測。";
+      log(
+        `backend user scope mismatch; expected=${userId} got=${data.user_id || "none"} user_required=${data.user_required}`,
+        "FAIL",
+      );
       return;
     }
     providerReadiness = data.providers || {};
@@ -602,35 +695,67 @@ async function checkHealth() {
       log(`backend version=${data.backend_version}`, "TRACE");
     }
     const diagnostics = data.provider_diagnostics || {};
-    if (Array.isArray(diagnostics.web_search_provider_order) && diagnostics.web_search_provider_order.length) {
-      log(`web search providers=${diagnostics.web_search_provider_order.join(">")}`, "TRACE");
+    if (
+      Array.isArray(diagnostics.web_search_provider_order) &&
+      diagnostics.web_search_provider_order.length
+    ) {
+      log(
+        `web search providers=${diagnostics.web_search_provider_order.join(">")}`,
+        "TRACE",
+      );
     }
     if (diagnostics.nvidia_key_present === false) {
-      log("nvidia health: NVIDIA_API_KEY is missing; NVIDIA will be skipped", "WARN");
+      log(
+        "nvidia health: NVIDIA_API_KEY is missing; NVIDIA will be skipped",
+        "WARN",
+      );
     } else if (diagnostics.nvidia_model) {
-      const nvidiaDiff = diagnostics.nvidia_raw_model && diagnostics.nvidia_effective_model && diagnostics.nvidia_raw_model !== diagnostics.nvidia_effective_model
-        ? `; effective=${diagnostics.nvidia_effective_model}`
-        : "";
-      log(`nvidia health: model=${diagnostics.nvidia_model}; base_url=${diagnostics.nvidia_base_url || "default"}${nvidiaDiff}`, "TRACE");
+      const nvidiaDiff =
+        diagnostics.nvidia_raw_model &&
+        diagnostics.nvidia_effective_model &&
+        diagnostics.nvidia_raw_model !== diagnostics.nvidia_effective_model
+          ? `; effective=${diagnostics.nvidia_effective_model}`
+          : "";
+      log(
+        `nvidia health: model=${diagnostics.nvidia_model}; base_url=${diagnostics.nvidia_base_url || "default"}${nvidiaDiff}`,
+        "TRACE",
+      );
     }
     if (diagnostics.cerebras_key_present === false) {
-      log("cerebras health: CEREBRAS_API_KEY is missing; Cerebras will be skipped", "WARN");
+      log(
+        "cerebras health: CEREBRAS_API_KEY is missing; Cerebras will be skipped",
+        "WARN",
+      );
     } else if (diagnostics.cerebras_model) {
-      const cerebrasDiff = diagnostics.cerebras_raw_model && diagnostics.cerebras_effective_model && diagnostics.cerebras_raw_model !== diagnostics.cerebras_effective_model
-        ? `; effective=${diagnostics.cerebras_effective_model}`
-        : "";
-      log(`cerebras health: model=${diagnostics.cerebras_model}${cerebrasDiff}`, "TRACE");
+      const cerebrasDiff =
+        diagnostics.cerebras_raw_model &&
+        diagnostics.cerebras_effective_model &&
+        diagnostics.cerebras_raw_model !== diagnostics.cerebras_effective_model
+          ? `; effective=${diagnostics.cerebras_effective_model}`
+          : "";
+      log(
+        `cerebras health: model=${diagnostics.cerebras_model}${cerebrasDiff}`,
+        "TRACE",
+      );
     }
     if (!data.password_required) {
-      log("backend reports password_required=false; set APP_PASSWORD on Render to enforce login", "WARN");
+      log(
+        "backend reports password_required=false; set APP_PASSWORD on Render to enforce login",
+        "WARN",
+      );
     }
     const ready = Object.entries(data.providers || {})
       .filter(([, ok]) => ok)
       .map(([name]) => name);
-    statusEl.textContent = ready.length ? `已連線：${ready.join(", ")}` : "尚未設定模型金鑰";
+    statusEl.textContent = ready.length
+      ? `已連線：${ready.join(", ")}`
+      : "尚未設定模型金鑰";
     statusEl.classList.toggle("warn", ready.length === 0);
     setUnlocked(true);
-    log(`health ok; user=${data.user_id}; scope=${data.storage_scope || "unknown"}; providers=${ready.join(", ") || "none"}`, ready.length ? "OK" : "WARN");
+    log(
+      `health ok; user=${data.user_id}; scope=${data.storage_scope || "unknown"}; providers=${ready.join(", ") || "none"}`,
+      ready.length ? "OK" : "WARN",
+    );
     if (providerReadiness.fireworks) {
       loadFireworksModels();
     }
@@ -692,7 +817,10 @@ async function loadThreads() {
 async function loadThread(threadIdToLoad) {
   if (!threadIdToLoad) return;
   try {
-    const res = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadIdToLoad)}/messages`), { headers: authHeaders() });
+    const res = await fetch(
+      apiUrl(`/api/threads/${encodeURIComponent(threadIdToLoad)}/messages`),
+      { headers: authHeaders() },
+    );
     const data = await res.json().catch(() => []);
     if (!res.ok) {
       throw new Error(data.detail || `HTTP ${res.status}`);
@@ -712,10 +840,13 @@ async function deleteThread(threadIdToDelete) {
   if (!threadIdToDelete) return;
   if (!window.confirm(`確定刪除此對話？\n${threadIdToDelete}`)) return;
   try {
-    const res = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadIdToDelete)}`), {
-      method: "DELETE",
-      headers: authHeaders()
-    });
+    const res = await fetch(
+      apiUrl(`/api/threads/${encodeURIComponent(threadIdToDelete)}`),
+      {
+        method: "DELETE",
+        headers: authHeaders(),
+      },
+    );
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.ok === false) {
       throw new Error(data.detail || `HTTP ${res.status}`);
@@ -737,7 +868,9 @@ async function deleteThread(threadIdToDelete) {
 async function loadGlobalMemory() {
   if (!globalMemoryList) return;
   try {
-    const res = await fetch(apiUrl("/api/global-memory"), { headers: authHeaders() });
+    const res = await fetch(apiUrl("/api/global-memory"), {
+      headers: authHeaders(),
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.detail || `HTTP ${res.status}`);
@@ -750,7 +883,9 @@ async function loadGlobalMemory() {
 
 function renderGlobalMemory(facts) {
   globalMemoryList.innerHTML = "";
-  const entries = Object.entries(facts || {}).sort(([a], [b]) => a.localeCompare(b));
+  const entries = Object.entries(facts || {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
   if (!entries.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
@@ -796,7 +931,7 @@ async function saveGlobalMemory() {
     const res = await fetch(apiUrl("/api/global-memory"), {
       method: "PUT",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ key, value })
+      body: JSON.stringify({ key, value }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -817,10 +952,13 @@ async function saveGlobalMemory() {
 async function deleteGlobalMemory(key) {
   if (!key) return;
   try {
-    const res = await fetch(apiUrl(`/api/global-memory/${encodeURIComponent(key)}`), {
-      method: "DELETE",
-      headers: authHeaders()
-    });
+    const res = await fetch(
+      apiUrl(`/api/global-memory/${encodeURIComponent(key)}`),
+      {
+        method: "DELETE",
+        headers: authHeaders(),
+      },
+    );
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.detail || `HTTP ${res.status}`);
@@ -836,10 +974,17 @@ async function loadFireworksModels() {
   const select = modelInputs.fireworks;
   if (!select) return;
   try {
-    const res = await fetch(apiUrl("/api/provider-models/fireworks"), { headers: authHeaders() });
-    const data = await res.json().catch(() => ({ ok: false, error: "JSON parse failed", models: [] }));
+    const res = await fetch(apiUrl("/api/provider-models/fireworks"), {
+      headers: authHeaders(),
+    });
+    const data = await res
+      .json()
+      .catch(() => ({ ok: false, error: "JSON parse failed", models: [] }));
     if (!data.ok) {
-      log(`fireworks model list failed: ${data.error || "unknown error"}`, "WARN");
+      log(
+        `fireworks model list failed: ${data.error || "unknown error"}`,
+        "WARN",
+      );
       return;
     }
     const models = data.models || [];
@@ -872,9 +1017,10 @@ async function loadFireworksModels() {
     for (const item of models) {
       const option = document.createElement("option");
       option.value = item.name;
-      option.textContent = item.display_name && item.display_name !== item.name
-        ? `${item.display_name} (${item.name})`
-        : item.name;
+      option.textContent =
+        item.display_name && item.display_name !== item.name
+          ? `${item.display_name} (${item.name})`
+          : item.name;
       group.appendChild(option);
     }
     select.appendChild(group);
@@ -884,9 +1030,11 @@ async function loadFireworksModels() {
       legacyGroup.label = "目前預設模型狀態";
       const option = document.createElement("option");
       option.value = currentModel.name;
-      const currentLabel = currentModel.display_name && currentModel.display_name !== currentModel.name
-        ? `${currentModel.display_name} (${currentModel.name})`
-        : currentModel.name;
+      const currentLabel =
+        currentModel.display_name &&
+        currentModel.display_name !== currentModel.name
+          ? `${currentModel.display_name} (${currentModel.name})`
+          : currentModel.name;
       option.textContent = !currentModel.online_in_catalog
         ? `${currentLabel} [deprecated or not in account list]`
         : `${currentLabel} [online in catalog, not serverless]`;
@@ -896,7 +1044,7 @@ async function loadFireworksModels() {
         currentModel.online_in_catalog
           ? `fireworks current model is online but not serverless: ${currentModel.name}`
           : `fireworks current model is not in account list: ${currentModel.name}`,
-        "WARN"
+        "WARN",
       );
     }
 
@@ -907,7 +1055,7 @@ async function loadFireworksModels() {
     if (currentModel.name) {
       log(
         `fireworks current model status: name=${currentModel.name}; online_in_catalog=${Boolean(currentModel.online_in_catalog)}; serverless_supported=${Boolean(currentModel.serverless_supported)}`,
-        "TRACE"
+        "TRACE",
       );
     }
   } catch (err) {
@@ -946,14 +1094,26 @@ async function sendMessage(message, endpoint = "/api/chat") {
   const effectiveProviderOrder = effectiveProviderOrderForRequest();
   const firstProvider = (effectiveProviderOrder || "").split(",")[0]?.trim();
   if (firstProvider && providerReadiness[firstProvider] === false) {
-    log(`${firstProvider} is selected first but not connected; backend will fail over to the next ready provider`, "WARN");
+    log(
+      `${firstProvider} is selected first but not connected; backend will fail over to the next ready provider`,
+      "WARN",
+    );
   }
   const imageSnapshot = attachedImage;
   if (imageSnapshot) {
-    log(`image attached: mimeType=${imageSnapshot.mimeType}; forcing provider_order=gemini`, "TRACE");
+    log(
+      `image attached: mimeType=${imageSnapshot.mimeType}; forcing provider_order=gemini`,
+      "TRACE",
+    );
   }
-  log(`calling ${endpoint}; user=${userId}; thread=${threadId}; provider_order=${imageSnapshot ? "gemini" : (effectiveProviderOrder || "backend")}`, "CALL");
-  log(`web search request: provider=${webSearchProviderMode}; force=${forceWebSearchInput.checked}`, "TRACE");
+  log(
+    `calling ${endpoint}; user=${userId}; thread=${threadId}; provider_order=${imageSnapshot ? "gemini" : effectiveProviderOrder || "backend"}`,
+    "CALL",
+  );
+  log(
+    `web search request: provider=${webSearchProviderMode}; force=${forceWebSearchInput.checked}`,
+    "TRACE",
+  );
 
   let timeoutId = null;
   try {
@@ -961,11 +1121,19 @@ async function sendMessage(message, endpoint = "/api/chat") {
     const preset = currentResponsePreset();
     const isMobile = isMobileLayout();
     const effectiveMaxTokens = Number(maxTokensInput.value || preset.maxTokens);
-    const effectiveHistoryTurns = isMobile ? Math.min(Number(preset.historyTurns || 2), 2) : Number(preset.historyTurns || 2);
-    const requestTimeoutMs = chatRequestTimeoutMsForMode(responseModeInput.value);
+    const effectiveHistoryTurns = isMobile
+      ? Math.min(Number(preset.historyTurns || 2), 2)
+      : Number(preset.historyTurns || 2);
+    const requestTimeoutMs = chatRequestTimeoutMsForMode(
+      responseModeInput.value,
+    );
     const disableAutoContinue = isMobile;
     const controller = new AbortController();
-    timeoutId = window.setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), requestTimeoutMs);
+    timeoutId = window.setTimeout(
+      () =>
+        controller.abort(new DOMException("Request timed out", "TimeoutError")),
+      requestTimeoutMs,
+    );
     const res = await fetch(apiUrl(endpoint), {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
@@ -983,8 +1151,13 @@ async function sendMessage(message, endpoint = "/api/chat") {
         model_overrides: collectModelOverrides(),
         web_search_provider: webSearchProviderMode,
         force_web_search: forceWebSearchInput.checked,
-        ...(imageSnapshot ? { image_base64: imageSnapshot.base64, image_mime_type: imageSnapshot.mimeType } : {})
-      })
+        ...(imageSnapshot
+          ? {
+              image_base64: imageSnapshot.base64,
+              image_mime_type: imageSnapshot.mimeType,
+            }
+          : {}),
+      }),
     });
 
     const data = await res.json();
@@ -1004,35 +1177,54 @@ async function sendMessage(message, endpoint = "/api/chat") {
       provider_attempts: data.provider_attempts,
       failover_errors: data.failover_errors,
       continue_rounds: data.continue_rounds,
-      web_search: data.web_search
+      web_search: data.web_search,
     });
     if (data.failover_errors?.length) {
-      log(`failover: ${data.failover_errors.map((item) => `${item.provider} -> ${item.error}`).join(" ; ")}`, "WARN");
+      log(
+        `failover: ${data.failover_errors.map((item) => `${item.provider} -> ${item.error}`).join(" ; ")}`,
+        "WARN",
+      );
     }
     logProviderTrace(data.provider_trace);
     logWebSearch(data.web_search);
     if (data.context_sizes) {
       log(
         `context sizes: heavy=${data.context_sizes.heavy_prompt_tokens || "?"}t/${data.context_sizes.heavy_prompt_chars || "?"}c | ` +
-        `light=${data.context_sizes.light_prompt_tokens || "?"}t/${data.context_sizes.light_prompt_chars || "?"}c`,
-        "TRACE"
+          `light=${data.context_sizes.light_prompt_tokens || "?"}t/${data.context_sizes.light_prompt_chars || "?"}c`,
+        "TRACE",
       );
     }
-    if (data.route_timeout_sec !== undefined && data.route_timeout_sec !== null) {
+    if (
+      data.route_timeout_sec !== undefined &&
+      data.route_timeout_sec !== null
+    ) {
       log(`route timeout budget=${data.route_timeout_sec}s`, "TRACE");
     }
-    log(`reply ok; provider=${data.provider || "unknown"} model=${data.model || "unknown"} latency=${data.latency_s ?? ((performance.now() - started) / 1000).toFixed(2)}s`, "OK");
+    log(
+      `reply ok; provider=${data.provider || "unknown"} model=${data.model || "unknown"} latency=${data.latency_s ?? ((performance.now() - started) / 1000).toFixed(2)}s`,
+      "OK",
+    );
     loadThreads();
     loadGlobalMemory();
   } catch (err) {
-    const rawMessage = err?.name === "AbortError" || /timed out/i.test(err?.message || "")
-      ? "請求逾時，已中止這次對話。請稍後再試，或改用更快的回覆模式。"
-      : friendlyNetworkError(err);
+    const rawMessage =
+      err?.name === "AbortError" || /timed out/i.test(err?.message || "")
+        ? "請求逾時，已中止這次對話。請稍後再試，或改用更快的回覆模式。"
+        : friendlyNetworkError(err);
     addMessage("assistant", `發生錯誤：${rawMessage}`);
-    log(`chat failed: ${err?.name || "Error"} ${err?.message || String(err)}; thread=${threadId}; provider_order=${effectiveProviderOrder || "backend"}`, "FAIL");
-    if (err?.name === "SyntaxError" || /expected pattern/i.test(err?.message || "")) {
+    log(
+      `chat failed: ${err?.name || "Error"} ${err?.message || String(err)}; thread=${threadId}; provider_order=${effectiveProviderOrder || "backend"}`,
+      "FAIL",
+    );
+    if (
+      err?.name === "SyntaxError" ||
+      /expected pattern/i.test(err?.message || "")
+    ) {
       log(`syntax error details: ${formatErrorDetails(err)}`, "TRACE");
-      log(`syntax error context: api_base=${apiBaseInput.value || "(same origin)"}; provider_order=${effectiveProviderOrder || "backend"}; user=${userId}; thread=${threadId}`, "TRACE");
+      log(
+        `syntax error context: api_base=${apiBaseInput.value || "(same origin)"}; provider_order=${effectiveProviderOrder || "backend"}; user=${userId}; thread=${threadId}`,
+        "TRACE",
+      );
     }
   } finally {
     if (timeoutId !== null) {
@@ -1126,7 +1318,10 @@ if (webSearchProviderButtons) {
 }
 
 forceWebSearchInput.addEventListener("change", () => {
-  localStorage.setItem(forceWebSearchKey, forceWebSearchInput.checked ? "true" : "false");
+  localStorage.setItem(
+    forceWebSearchKey,
+    forceWebSearchInput.checked ? "true" : "false",
+  );
   log(`force web search=${forceWebSearchInput.checked}`, "DEBUG");
 });
 
@@ -1135,7 +1330,10 @@ window.addEventListener("resize", () => {
   if (nowMobile === lastMobileLayoutState) return;
   lastMobileLayoutState = nowMobile;
   applyResponsePreset(false);
-  log(`layout changed: ${nowMobile ? "mobile" : "desktop"}; provider_order=${providerOrderInput.value || "backend"}`, "DEBUG");
+  log(
+    `layout changed: ${nowMobile ? "mobile" : "desktop"}; provider_order=${providerOrderInput.value || "backend"}`,
+    "DEBUG",
+  );
   if (nowMobile) {
     mainWorkspace.classList.add("sidebar-collapsed");
     mainWorkspace.classList.remove("settings-open");
@@ -1219,7 +1417,10 @@ passwordButton.addEventListener("click", () => {
     localStorage.setItem(threadStorageKey(), threadId);
     threadInput.value = threadId;
     messages.innerHTML = "";
-    addMessage("assistant", `已切換使用者：${userId}。歷史對話與全域記憶只會顯示此使用者的資料。`);
+    addMessage(
+      "assistant",
+      `已切換使用者：${userId}。歷史對話與全域記憶只會顯示此使用者的資料。`,
+    );
   }
   appPassword = passwordInput.value;
   sessionStorage.setItem(passwordKey, appPassword);
@@ -1248,9 +1449,11 @@ applyResponsePreset(false);
 if (isMobileLayout()) {
   mainWorkspace.classList.add("sidebar-collapsed");
 }
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  if (!themeMode) {
-    applyTheme();
-  }
-});
+window
+  .matchMedia("(prefers-color-scheme: dark)")
+  .addEventListener("change", () => {
+    if (!themeMode) {
+      applyTheme();
+    }
+  });
 checkHealth();

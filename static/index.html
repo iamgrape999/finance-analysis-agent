@@ -11,7 +11,14 @@
       <section class="topbar">
         <div class="topbar-brand">
           <div class="topbar-actions">
-            <button id="toggleSidebarButton" type="button" class="icon-button" aria-label="Toggle sidebar">&#9776;</button>
+            <button
+              id="toggleSidebarButton"
+              type="button"
+              class="icon-button"
+              aria-label="Toggle sidebar"
+            >
+              &#9776;
+            </button>
             <div>
               <p class="eyebrow">CathyChang AI</p>
               <h1>CathyChang AI</h1>
@@ -19,9 +26,24 @@
           </div>
         </div>
         <div class="topbar-actions">
-          <button id="toggleThemeButton" type="button" class="utility-button" aria-label="Toggle dark mode">Dark</button>
-          <button id="toggleSettingsButton" type="button" class="utility-button">Settings</button>
-          <button id="toggleLogButton" type="button" class="utility-button">Log</button>
+          <button
+            id="toggleThemeButton"
+            type="button"
+            class="utility-button"
+            aria-label="Toggle dark mode"
+          >
+            Dark
+          </button>
+          <button
+            id="toggleSettingsButton"
+            type="button"
+            class="utility-button"
+          >
+            Settings
+          </button>
+          <button id="toggleLogButton" type="button" class="utility-button">
+            Log
+          </button>
           <div id="status" class="status">Checking connection</div>
         </div>
       </section>
@@ -29,10 +51,27 @@
       <section id="passwordGate" class="password-gate">
         <div class="password-box">
           <h2>Protected Access</h2>
-          <p>Sign in to get a short-lived session token. Your raw password is used only for login and is not stored in the browser.</p>
-          <input id="passwordApiBaseInput" type="url" placeholder="Render Backend URL, e.g. https://xxx.onrender.com" />
-          <input id="passwordUserInput" type="text" placeholder="User ID, e.g. hanli / cathy / user01" autocomplete="username" />
-          <input id="passwordInput" type="password" placeholder="Password" autocomplete="current-password" />
+          <p>
+            Sign in to get a short-lived session token. Your raw password is
+            used only for login and is not stored in the browser.
+          </p>
+          <input
+            id="passwordApiBaseInput"
+            type="url"
+            placeholder="Render Backend URL, e.g. https://xxx.onrender.com"
+          />
+          <input
+            id="passwordUserInput"
+            type="text"
+            placeholder="User ID, e.g. hanli / cathy / user01"
+            autocomplete="username"
+          />
+          <input
+            id="passwordInput"
+            type="password"
+            placeholder="Password"
+            autocomplete="current-password"
+          />
           <button id="passwordButton" type="button">Connect</button>
           <p id="passwordError" class="password-error"></p>
         </div>
@@ -42,14 +81,28 @@
         <section id="mainWorkspace" class="workspace">
           <aside class="settings">
             <section class="sidebar-section sidebar-primary-actions">
-              <button id="newThreadButton" type="button" class="sidebar-primary-button">+ New Chat</button>
-              <button id="clearButton" type="button" class="secondary">Clear Screen</button>
+              <button
+                id="newThreadButton"
+                type="button"
+                class="sidebar-primary-button"
+              >
+                + New Chat
+              </button>
+              <button id="clearButton" type="button" class="secondary">
+                Clear Screen
+              </button>
             </section>
 
             <section class="sidebar-section">
               <div class="section-title-row">
                 <h3>History</h3>
-                <button id="refreshThreadsButton" type="button" class="tiny-button">Refresh</button>
+                <button
+                  id="refreshThreadsButton"
+                  type="button"
+                  class="tiny-button"
+                >
+                  Refresh
+                </button>
               </div>
               <div id="threadList" class="thread-list"></div>
             </section>
@@ -60,9 +113,23 @@
               </div>
               <div id="globalMemoryList" class="global-memory-list"></div>
               <div class="global-memory-editor">
-                <input id="globalMemoryKeyInput" type="text" placeholder="key, e.g. customer_segment" />
-                <input id="globalMemoryValueInput" type="text" placeholder="value, e.g. SME" />
-                <button id="saveGlobalMemoryButton" type="button" class="secondary">Save Global Memory</button>
+                <input
+                  id="globalMemoryKeyInput"
+                  type="text"
+                  placeholder="key, e.g. customer_segment"
+                />
+                <input
+                  id="globalMemoryValueInput"
+                  type="text"
+                  placeholder="value, e.g. SME"
+                />
+                <button
+                  id="saveGlobalMemoryButton"
+                  type="button"
+                  class="secondary"
+                >
+                  Save Global Memory
+                </button>
               </div>
             </section>
 
@@ -77,56 +144,107 @@
 
           <section id="messages" class="messages" aria-live="polite">
             <article class="message assistant">
-              Please enter your message. I will keep the chat context in this browser and reply using the provider configured by the backend.
+              Please enter your message. I will keep the chat context in this
+              browser and reply using the provider configured by the backend.
             </article>
           </section>
 
           <aside id="settingsPanel" class="settings-panel">
             <div class="panel-title-row">
               <h2>Settings</h2>
-              <button id="closeSettingsButton" type="button" class="tiny-button">Close</button>
+              <button
+                id="closeSettingsButton"
+                type="button"
+                class="tiny-button"
+              >
+                Close
+              </button>
             </div>
 
-              <section class="settings-card">
-                <h3>General</h3>
-                <label>
-                  Backend API URL
-                  <input id="apiBaseInput" type="url" placeholder="Leave empty for same origin; use Render URL for GitHub Pages" />
+            <section class="settings-card">
+              <h3>General</h3>
+              <label>
+                Backend API URL
+                <input
+                  id="apiBaseInput"
+                  type="url"
+                  placeholder="Leave empty for same origin; use Render URL for GitHub Pages"
+                />
               </label>
 
               <label>
                 Response Mode
                 <select id="responseModeInput">
-                  <option value="fast" selected>Fast Reply (Cerebras / Groq / Mistral first)</option>
-                  <option value="stable">Stable Chat (Cerebras / Groq / Mistral first)</option>
-                  <option value="deep">Deep Analysis (Cerebras / Groq / Mistral / Gemini first)</option>
+                  <option value="fast" selected>
+                    Fast Reply (Cerebras / Groq / Mistral first)
+                  </option>
+                  <option value="stable">
+                    Stable Chat (Cerebras / Groq / Mistral first)
+                  </option>
+                  <option value="deep">
+                    Deep Analysis (Cerebras / Groq / Mistral / Gemini first)
+                  </option>
                 </select>
               </label>
 
               <label>
                 Max tokens
-                <input id="maxTokensInput" type="number" value="768" min="128" max="12000" />
+                <input
+                  id="maxTokensInput"
+                  type="number"
+                  value="768"
+                  min="128"
+                  max="12000"
+                />
               </label>
 
-                <label>
-                  Temperature
-                  <input id="temperatureInput" type="number" value="0.2" min="0" max="2" step="0.05" />
-                </label>
+              <label>
+                Temperature
+                <input
+                  id="temperatureInput"
+                  type="number"
+                  value="0.2"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                />
+              </label>
 
-                <div class="search-provider-group">
-                  <span class="group-label">Web Search Source</span>
-                  <div class="search-provider-buttons" id="webSearchProviderButtons">
-                    <button type="button" class="search-provider-button is-active" data-search-provider="auto">Auto</button>
-                    <button type="button" class="search-provider-button" data-search-provider="tavily">Tavily</button>
-                    <button type="button" class="search-provider-button" data-search-provider="serper">Serper</button>
-                  </div>
+              <div class="search-provider-group">
+                <span class="group-label">Web Search Source</span>
+                <div
+                  class="search-provider-buttons"
+                  id="webSearchProviderButtons"
+                >
+                  <button
+                    type="button"
+                    class="search-provider-button is-active"
+                    data-search-provider="auto"
+                  >
+                    Auto
+                  </button>
+                  <button
+                    type="button"
+                    class="search-provider-button"
+                    data-search-provider="tavily"
+                  >
+                    Tavily
+                  </button>
+                  <button
+                    type="button"
+                    class="search-provider-button"
+                    data-search-provider="serper"
+                  >
+                    Serper
+                  </button>
                 </div>
+              </div>
 
-                <label class="checkbox-label">
-                  <input id="forceWebSearchInput" type="checkbox" />
-                  <span>Force Web Search for this message</span>
-                </label>
-              </section>
+              <label class="checkbox-label">
+                <input id="forceWebSearchInput" type="checkbox" />
+                <span>Force Web Search for this message</span>
+              </label>
+            </section>
 
             <section class="settings-card">
               <h3>Routing</h3>
@@ -134,22 +252,58 @@
                 Provider Order
                 <select id="providerOrderInput">
                   <option value="">Auto (use backend default)</option>
-                  <option value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Recommended: Cerebras / Groq / Mistral first</option>
-                  <option value="mistral,groq,cerebras,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Mistral first</option>
-                  <option value="groq,cerebras,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia">Groq first</option>
-                  <option value="gemini,mistral,cerebras,openrouter,cloudflare,groq,fireworks,aws,nvidia">Gemini first</option>
-                  <option value="openrouter,gemini,mistral,cerebras,cloudflare,groq,fireworks,aws,nvidia">OpenRouter first</option>
-                  <option value="cloudflare,groq,mistral,gemini,openrouter,fireworks,aws,nvidia">Cloudflare first</option>
-                  <option value="fireworks,openrouter,mistral,gemini,cerebras,cloudflare,groq,aws,nvidia">Fireworks first (uses credit)</option>
-                  <option value="nvidia,cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws">NVIDIA first</option>
+                  <option
+                    value="cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia"
+                  >
+                    Recommended: Cerebras / Groq / Mistral first
+                  </option>
+                  <option
+                    value="mistral,groq,cerebras,gemini,openrouter,cloudflare,fireworks,aws,nvidia"
+                  >
+                    Mistral first
+                  </option>
+                  <option
+                    value="groq,cerebras,mistral,gemini,openrouter,cloudflare,fireworks,aws,nvidia"
+                  >
+                    Groq first
+                  </option>
+                  <option
+                    value="gemini,mistral,cerebras,openrouter,cloudflare,groq,fireworks,aws,nvidia"
+                  >
+                    Gemini first
+                  </option>
+                  <option
+                    value="openrouter,gemini,mistral,cerebras,cloudflare,groq,fireworks,aws,nvidia"
+                  >
+                    OpenRouter first
+                  </option>
+                  <option
+                    value="cloudflare,groq,mistral,gemini,openrouter,fireworks,aws,nvidia"
+                  >
+                    Cloudflare first
+                  </option>
+                  <option
+                    value="fireworks,openrouter,mistral,gemini,cerebras,cloudflare,groq,aws,nvidia"
+                  >
+                    Fireworks first (uses credit)
+                  </option>
+                  <option
+                    value="nvidia,cerebras,groq,mistral,gemini,openrouter,cloudflare,fireworks,aws"
+                  >
+                    NVIDIA first
+                  </option>
                   <option value="nvidia">nvidia only (no fallback)</option>
                   <option value="mistral">mistral only (no fallback)</option>
                   <option value="cerebras">cerebras only (no fallback)</option>
-                  <option value="openrouter">openrouter only (no fallback)</option>
+                  <option value="openrouter">
+                    openrouter only (no fallback)
+                  </option>
                 </select>
               </label>
 
-              <button id="selfTestButton" type="button" class="secondary">SelfTest</button>
+              <button id="selfTestButton" type="button" class="secondary">
+                SelfTest
+              </button>
             </section>
 
             <section class="settings-card">
@@ -162,25 +316,55 @@
                   <select id="nvidiaModelInput">
                     <option value="">Use .env default</option>
                     <optgroup label="NVIDIA Free Endpoint Production Models">
-                      <option value="meta/llama-4-maverick-17b-128e-instruct">meta/llama-4-maverick-17b-128e-instruct</option>
+                      <option value="meta/llama-4-maverick-17b-128e-instruct">
+                        meta/llama-4-maverick-17b-128e-instruct
+                      </option>
                     </optgroup>
                     <optgroup label="NVIDIA Free Endpoint Preview Models">
-                      <option value="nvidia/nemotron-3-super-120b-a12b">nvidia/nemotron-3-super-120b-a12b</option>
-                      <option value="qwen/qwen3-coder-480b-a35b-instruct">qwen/qwen3-coder-480b-a35b-instruct</option>
-                      <option value="qwen/qwen3.5-122b-a10b">qwen/qwen3.5-122b-a10b</option>
+                      <option value="nvidia/nemotron-3-super-120b-a12b">
+                        nvidia/nemotron-3-super-120b-a12b
+                      </option>
+                      <option value="qwen/qwen3-coder-480b-a35b-instruct">
+                        qwen/qwen3-coder-480b-a35b-instruct
+                      </option>
+                      <option value="qwen/qwen3.5-122b-a10b">
+                        qwen/qwen3.5-122b-a10b
+                      </option>
                       <option value="z-ai/glm-4.7">z-ai/glm-4.7</option>
                       <option value="z-ai/glm-5.1">z-ai/glm-5.1</option>
-                      <option value="minimaxai/minimax-m2.7">minimaxai/minimax-m2.7</option>
-                      <option value="moonshotai/kimi-k2-instruct">moonshotai/kimi-k2-instruct</option>
-                      <option value="moonshotai/kimi-k2.5">moonshotai/kimi-k2.5</option>
-                      <option value="deepseek-ai/deepseek-v3.2">deepseek-ai/deepseek-v3.2</option>
-                      <option value="deepseek-ai/deepseek-v3.1-terminus">deepseek-ai/deepseek-v3.1-terminus</option>
-                      <option value="deepseek-ai/deepseek-r1">deepseek-ai/deepseek-r1</option>
-                      <option value="stepfun-ai/step-3.5-flash">stepfun-ai/step-3.5-flash</option>
-                      <option value="google/gemma-3-27b-it">google/gemma-3-27b-it</option>
-                      <option value="google/gemma-4-31b-it">google/gemma-4-31b-it</option>
-                      <option value="mistralai/mistral-large-2411">mistralai/mistral-large-2411</option>
-                      <option value="mistralai/mistral-nemotron">mistralai/mistral-nemotron</option>
+                      <option value="minimaxai/minimax-m2.7">
+                        minimaxai/minimax-m2.7
+                      </option>
+                      <option value="moonshotai/kimi-k2-instruct">
+                        moonshotai/kimi-k2-instruct
+                      </option>
+                      <option value="moonshotai/kimi-k2.5">
+                        moonshotai/kimi-k2.5
+                      </option>
+                      <option value="deepseek-ai/deepseek-v3.2">
+                        deepseek-ai/deepseek-v3.2
+                      </option>
+                      <option value="deepseek-ai/deepseek-v3.1-terminus">
+                        deepseek-ai/deepseek-v3.1-terminus
+                      </option>
+                      <option value="deepseek-ai/deepseek-r1">
+                        deepseek-ai/deepseek-r1
+                      </option>
+                      <option value="stepfun-ai/step-3.5-flash">
+                        stepfun-ai/step-3.5-flash
+                      </option>
+                      <option value="google/gemma-3-27b-it">
+                        google/gemma-3-27b-it
+                      </option>
+                      <option value="google/gemma-4-31b-it">
+                        google/gemma-4-31b-it
+                      </option>
+                      <option value="mistralai/mistral-large-2411">
+                        mistralai/mistral-large-2411
+                      </option>
+                      <option value="mistralai/mistral-nemotron">
+                        mistralai/mistral-nemotron
+                      </option>
                     </optgroup>
                   </select>
                 </label>
@@ -196,7 +380,9 @@
                       <option value="llama3.1-8b">llama3.1-8b</option>
                     </optgroup>
                     <optgroup label="Cerebras Preview Models">
-                      <option value="qwen-3-235b-a22b-instruct-2507">qwen-3-235b-a22b-instruct-2507 (deprecated May 27, 2026)</option>
+                      <option value="qwen-3-235b-a22b-instruct-2507">
+                        qwen-3-235b-a22b-instruct-2507 (deprecated May 27, 2026)
+                      </option>
                       <option value="zai-glm-4.7">zai-glm-4.7</option>
                     </optgroup>
                   </select>
@@ -210,9 +396,15 @@
                   <select id="mistralModelInput">
                     <option value="">Use .env default</option>
                     <optgroup label="Mistral Common Models">
-                      <option value="mistral-large-latest">mistral-large-latest</option>
-                      <option value="mistral-medium-latest">mistral-medium-latest</option>
-                      <option value="mistral-small-latest">mistral-small-latest</option>
+                      <option value="mistral-large-latest">
+                        mistral-large-latest
+                      </option>
+                      <option value="mistral-medium-latest">
+                        mistral-medium-latest
+                      </option>
+                      <option value="mistral-small-latest">
+                        mistral-small-latest
+                      </option>
                     </optgroup>
                   </select>
                 </label>
@@ -224,31 +416,75 @@
                   OpenRouter Model
                   <select id="openrouterModelInput">
                     <option value="">Use .env default</option>
-                    <optgroup label="OpenRouter Free Models: reasoning high to low">
-                      <option value="openai/gpt-oss-120b:free">openai/gpt-oss-120b:free</option>
-                      <option value="nvidia/nemotron-3-super-120b-a12b:free">nvidia/nemotron-3-super-120b-a12b:free</option>
-                      <option value="arcee-ai/trinity-large-preview:free">arcee-ai/trinity-large-preview:free</option>
-                      <option value="qwen/qwen3-coder:free">qwen/qwen3-coder:free</option>
-                      <option value="qwen/qwen3-next-80b-a3b-instruct:free">qwen/qwen3-next-80b-a3b-instruct:free</option>
-                      <option value="meta-llama/llama-3.3-70b-instruct:free">meta-llama/llama-3.3-70b-instruct:free</option>
-                      <option value="z-ai/glm-4.5-air:free">z-ai/glm-4.5-air:free</option>
-                      <option value="minimax/minimax-m2.5:free">minimax/minimax-m2.5:free</option>
-                      <option value="google/gemma-4-31b-it:free">google/gemma-4-31b-it:free</option>
-                      <option value="nvidia/nemotron-3-nano-30b-a3b:free">nvidia/nemotron-3-nano-30b-a3b:free</option>
-                      <option value="google/gemma-4-26b-a4b-it:free">google/gemma-4-26b-a4b-it:free</option>
-                      <option value="openai/gpt-oss-20b:free">openai/gpt-oss-20b:free</option>
-                      <option value="nvidia/nemotron-nano-9b-v2:free">nvidia/nemotron-nano-9b-v2:free</option>
-                      <option value="openrouter/elephant-alpha">openrouter/elephant-alpha (free)</option>
+                    <optgroup
+                      label="OpenRouter Free Models: reasoning high to low"
+                    >
+                      <option value="openai/gpt-oss-120b:free">
+                        openai/gpt-oss-120b:free
+                      </option>
+                      <option value="nvidia/nemotron-3-super-120b-a12b:free">
+                        nvidia/nemotron-3-super-120b-a12b:free
+                      </option>
+                      <option value="arcee-ai/trinity-large-preview:free">
+                        arcee-ai/trinity-large-preview:free
+                      </option>
+                      <option value="qwen/qwen3-coder:free">
+                        qwen/qwen3-coder:free
+                      </option>
+                      <option value="qwen/qwen3-next-80b-a3b-instruct:free">
+                        qwen/qwen3-next-80b-a3b-instruct:free
+                      </option>
+                      <option value="meta-llama/llama-3.3-70b-instruct:free">
+                        meta-llama/llama-3.3-70b-instruct:free
+                      </option>
+                      <option value="z-ai/glm-4.5-air:free">
+                        z-ai/glm-4.5-air:free
+                      </option>
+                      <option value="minimax/minimax-m2.5:free">
+                        minimax/minimax-m2.5:free
+                      </option>
+                      <option value="google/gemma-4-31b-it:free">
+                        google/gemma-4-31b-it:free
+                      </option>
+                      <option value="nvidia/nemotron-3-nano-30b-a3b:free">
+                        nvidia/nemotron-3-nano-30b-a3b:free
+                      </option>
+                      <option value="google/gemma-4-26b-a4b-it:free">
+                        google/gemma-4-26b-a4b-it:free
+                      </option>
+                      <option value="openai/gpt-oss-20b:free">
+                        openai/gpt-oss-20b:free
+                      </option>
+                      <option value="nvidia/nemotron-nano-9b-v2:free">
+                        nvidia/nemotron-nano-9b-v2:free
+                      </option>
+                      <option value="openrouter/elephant-alpha">
+                        openrouter/elephant-alpha (free)
+                      </option>
                     </optgroup>
-                    <optgroup label="OpenRouter Paid Models: reasoning high to low">
-                      <option value="openai/gpt-4.1-mini">openai/gpt-4.1-mini</option>
-                      <option value="meta-llama/llama-3.1-70b-instruct">meta-llama/llama-3.1-70b-instruct</option>
-                      <option value="anthropic/claude-3.5-haiku">anthropic/claude-3.5-haiku</option>
-                      <option value="openai/gpt-4o-mini">openai/gpt-4o-mini</option>
-                      <option value="google/gemini-flash-1.5">google/gemini-flash-1.5</option>
+                    <optgroup
+                      label="OpenRouter Paid Models: reasoning high to low"
+                    >
+                      <option value="openai/gpt-4.1-mini">
+                        openai/gpt-4.1-mini
+                      </option>
+                      <option value="meta-llama/llama-3.1-70b-instruct">
+                        meta-llama/llama-3.1-70b-instruct
+                      </option>
+                      <option value="anthropic/claude-3.5-haiku">
+                        anthropic/claude-3.5-haiku
+                      </option>
+                      <option value="openai/gpt-4o-mini">
+                        openai/gpt-4o-mini
+                      </option>
+                      <option value="google/gemini-flash-1.5">
+                        google/gemini-flash-1.5
+                      </option>
                     </optgroup>
                     <optgroup label="OpenRouter Auto Routing">
-                      <option value="openrouter/free">openrouter/free (auto free model)</option>
+                      <option value="openrouter/free">
+                        openrouter/free (auto free model)
+                      </option>
                     </optgroup>
                   </select>
                 </label>
@@ -259,7 +495,10 @@
                 <label>
                   Fireworks Model
                   <select id="fireworksModelInput">
-                    <option value="">Use .env default: accounts/fireworks/models/minimax-m2p7; loads available models when connected</option>
+                    <option value="">
+                      Use .env default: accounts/fireworks/models/minimax-m2p7;
+                      loads available models when connected
+                    </option>
                   </select>
                 </label>
               </details>
@@ -272,9 +511,13 @@
                     <option value="">Use .env default</option>
                     <optgroup label="Gemini Flash / Flash-Lite">
                       <option value="gemini-3.0-flash">gemini-3.0-flash</option>
-                      <option value="gemini-3.0-flash-lite">gemini-3.0-flash-lite</option>
+                      <option value="gemini-3.0-flash-lite">
+                        gemini-3.0-flash-lite
+                      </option>
                       <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                      <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+                      <option value="gemini-2.5-flash-lite">
+                        gemini-2.5-flash-lite
+                      </option>
                     </optgroup>
                   </select>
                 </label>
@@ -286,17 +529,35 @@
                   Cloudflare Model
                   <select id="cloudflareModelInput">
                     <option value="">Use .env default</option>
-                    <optgroup label="Cloudflare Text Models: reasoning high to low">
-                      <option value="@cf/openai/gpt-oss-120b">@cf/openai/gpt-oss-120b</option>
-                      <option value="@cf/meta/llama-3.1-70b-instruct">@cf/meta/llama-3.1-70b-instruct</option>
-                      <option value="@cf/meta/llama-4-scout-17b-16e-instruct">@cf/meta/llama-4-scout-17b-16e-instruct</option>
-                      <option value="@cf/zai-org/glm-4.7-flash">@cf/zai-org/glm-4.7-flash</option>
-                      <option value="@cf/qwen/qwen3-30b-a3b-fp8">@cf/qwen/qwen3-30b-a3b-fp8</option>
-                      <option value="@cf/openai/gpt-oss-20b">@cf/openai/gpt-oss-20b</option>
-                      <option value="@cf/meta/llama-3.1-8b-instruct">@cf/meta/llama-3.1-8b-instruct</option>
+                    <optgroup
+                      label="Cloudflare Text Models: reasoning high to low"
+                    >
+                      <option value="@cf/openai/gpt-oss-120b">
+                        @cf/openai/gpt-oss-120b
+                      </option>
+                      <option value="@cf/meta/llama-3.1-70b-instruct">
+                        @cf/meta/llama-3.1-70b-instruct
+                      </option>
+                      <option value="@cf/meta/llama-4-scout-17b-16e-instruct">
+                        @cf/meta/llama-4-scout-17b-16e-instruct
+                      </option>
+                      <option value="@cf/zai-org/glm-4.7-flash">
+                        @cf/zai-org/glm-4.7-flash
+                      </option>
+                      <option value="@cf/qwen/qwen3-30b-a3b-fp8">
+                        @cf/qwen/qwen3-30b-a3b-fp8
+                      </option>
+                      <option value="@cf/openai/gpt-oss-20b">
+                        @cf/openai/gpt-oss-20b
+                      </option>
+                      <option value="@cf/meta/llama-3.1-8b-instruct">
+                        @cf/meta/llama-3.1-8b-instruct
+                      </option>
                     </optgroup>
                     <optgroup label="Cloudflare Legacy / Compatibility">
-                      <option value="@cf/mistral/mistral-7b-instruct-v0.2">@cf/mistral/mistral-7b-instruct-v0.2</option>
+                      <option value="@cf/mistral/mistral-7b-instruct-v0.2">
+                        @cf/mistral/mistral-7b-instruct-v0.2
+                      </option>
                     </optgroup>
                   </select>
                 </label>
@@ -308,18 +569,32 @@
                   Groq Model
                   <select id="groqModelInput">
                     <option value="">Use .env default</option>
-                    <optgroup label="Groq Production Models: reasoning high to low">
-                      <option value="openai/gpt-oss-120b">openai/gpt-oss-120b</option>
-                      <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
-                      <option value="openai/gpt-oss-20b">openai/gpt-oss-20b</option>
-                      <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
+                    <optgroup
+                      label="Groq Production Models: reasoning high to low"
+                    >
+                      <option value="openai/gpt-oss-120b">
+                        openai/gpt-oss-120b
+                      </option>
+                      <option value="llama-3.3-70b-versatile">
+                        llama-3.3-70b-versatile
+                      </option>
+                      <option value="openai/gpt-oss-20b">
+                        openai/gpt-oss-20b
+                      </option>
+                      <option value="llama-3.1-8b-instant">
+                        llama-3.1-8b-instant
+                      </option>
                     </optgroup>
                     <optgroup label="Groq Systems">
                       <option value="groq/compound">groq/compound</option>
-                      <option value="groq/compound-mini">groq/compound-mini</option>
+                      <option value="groq/compound-mini">
+                        groq/compound-mini
+                      </option>
                     </optgroup>
                     <optgroup label="Groq Legacy / Compatibility">
-                      <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
+                      <option value="mixtral-8x7b-32768">
+                        mixtral-8x7b-32768
+                      </option>
                       <option value="gemma2-9b-it">gemma2-9b-it</option>
                     </optgroup>
                   </select>
@@ -333,28 +608,76 @@
                   <select id="awsModelInput">
                     <option value="">Use .env default</option>
                     <optgroup label="Claude 4.6 / Latest">
-                      <option value="anthropic.claude-sonnet-4-6">anthropic.claude-sonnet-4-6</option>
-                      <option value="us.anthropic.claude-sonnet-4-6">us.anthropic.claude-sonnet-4-6</option>
-                      <option value="global.anthropic.claude-sonnet-4-6">global.anthropic.claude-sonnet-4-6</option>
-                      <option value="anthropic.claude-opus-4-6-v1">anthropic.claude-opus-4-6-v1</option>
-                      <option value="us.anthropic.claude-opus-4-6-v1">us.anthropic.claude-opus-4-6-v1</option>
-                      <option value="global.anthropic.claude-opus-4-6-v1">global.anthropic.claude-opus-4-6-v1</option>
+                      <option value="anthropic.claude-sonnet-4-6">
+                        anthropic.claude-sonnet-4-6
+                      </option>
+                      <option value="us.anthropic.claude-sonnet-4-6">
+                        us.anthropic.claude-sonnet-4-6
+                      </option>
+                      <option value="global.anthropic.claude-sonnet-4-6">
+                        global.anthropic.claude-sonnet-4-6
+                      </option>
+                      <option value="anthropic.claude-opus-4-6-v1">
+                        anthropic.claude-opus-4-6-v1
+                      </option>
+                      <option value="us.anthropic.claude-opus-4-6-v1">
+                        us.anthropic.claude-opus-4-6-v1
+                      </option>
+                      <option value="global.anthropic.claude-opus-4-6-v1">
+                        global.anthropic.claude-opus-4-6-v1
+                      </option>
                     </optgroup>
                     <optgroup label="Claude 4.5">
-                      <option value="anthropic.claude-opus-4-5-20251101-v1:0">anthropic.claude-opus-4-5-20251101-v1:0</option>
-                      <option value="us.anthropic.claude-opus-4-5-20251101-v1:0">us.anthropic.claude-opus-4-5-20251101-v1:0</option>
-                      <option value="global.anthropic.claude-opus-4-5-20251101-v1:0">global.anthropic.claude-opus-4-5-20251101-v1:0</option>
-                      <option value="anthropic.claude-sonnet-4-5-20250929-v1:0">anthropic.claude-sonnet-4-5-20250929-v1:0</option>
-                      <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">us.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
-                      <option value="global.anthropic.claude-sonnet-4-5-20250929-v1:0">global.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
-                      <option value="anthropic.claude-haiku-4-5-20251001-v1:0">anthropic.claude-haiku-4-5-20251001-v1:0</option>
-                      <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">us.anthropic.claude-haiku-4-5-20251001-v1:0</option>
-                      <option value="global.anthropic.claude-haiku-4-5-20251001-v1:0">global.anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                      <option value="anthropic.claude-opus-4-5-20251101-v1:0">
+                        anthropic.claude-opus-4-5-20251101-v1:0
+                      </option>
+                      <option
+                        value="us.anthropic.claude-opus-4-5-20251101-v1:0"
+                      >
+                        us.anthropic.claude-opus-4-5-20251101-v1:0
+                      </option>
+                      <option
+                        value="global.anthropic.claude-opus-4-5-20251101-v1:0"
+                      >
+                        global.anthropic.claude-opus-4-5-20251101-v1:0
+                      </option>
+                      <option value="anthropic.claude-sonnet-4-5-20250929-v1:0">
+                        anthropic.claude-sonnet-4-5-20250929-v1:0
+                      </option>
+                      <option
+                        value="us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                      >
+                        us.anthropic.claude-sonnet-4-5-20250929-v1:0
+                      </option>
+                      <option
+                        value="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                      >
+                        global.anthropic.claude-sonnet-4-5-20250929-v1:0
+                      </option>
+                      <option value="anthropic.claude-haiku-4-5-20251001-v1:0">
+                        anthropic.claude-haiku-4-5-20251001-v1:0
+                      </option>
+                      <option
+                        value="us.anthropic.claude-haiku-4-5-20251001-v1:0"
+                      >
+                        us.anthropic.claude-haiku-4-5-20251001-v1:0
+                      </option>
+                      <option
+                        value="global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                      >
+                        global.anthropic.claude-haiku-4-5-20251001-v1:0
+                      </option>
                     </optgroup>
                     <optgroup label="Claude 3.x / Compatibility">
-                      <option value="anthropic.claude-3-haiku-20240307-v1:0">anthropic.claude-3-haiku-20240307-v1:0</option>
-                      <option value="anthropic.claude-3-5-haiku-20241022-v1:0">anthropic.claude-3-5-haiku-20241022-v1:0</option>
-                      <option value="anthropic.claude-3-5-sonnet-20241022-v2:0">anthropic.claude-3-5-sonnet-20241022-v2:0</option>
+                      <option value="anthropic.claude-3-haiku-20240307-v1:0">
+                        anthropic.claude-3-haiku-20240307-v1:0
+                      </option>
+                      <option value="anthropic.claude-3-5-haiku-20241022-v1:0">
+                        anthropic.claude-3-5-haiku-20241022-v1:0
+                      </option>
+                      <option value="anthropic.claude-3-5-sonnet-20241022-v2:0">
+                        anthropic.claude-3-5-sonnet-20241022-v2:0
+                      </option>
                     </optgroup>
                   </select>
                 </label>
@@ -365,7 +688,9 @@
           <aside id="logPanel" class="log-panel">
             <div class="panel-title-row">
               <h2>Log Panel</h2>
-              <button id="closeLogButton" type="button" class="tiny-button">Close</button>
+              <button id="closeLogButton" type="button" class="tiny-button">
+                Close
+              </button>
             </div>
             <div id="logs" class="logs"></div>
           </aside>
@@ -374,12 +699,30 @@
         <form id="chatForm" class="composer">
           <div id="imagePreview" class="image-preview" hidden>
             <img id="imagePreviewImg" alt="attached image" />
-            <button id="removeImageBtn" type="button" class="remove-image-btn" aria-label="Remove image">&#x2715;</button>
+            <button
+              id="removeImageBtn"
+              type="button"
+              class="remove-image-btn"
+              aria-label="Remove image"
+            >
+              &#x2715;
+            </button>
           </div>
           <label class="sr-only" for="messageInput">Message</label>
-          <textarea id="messageInput" rows="3" placeholder="Example: Please fully introduce the K-POP girl group i-dle and explain each member's background and traits in detail"></textarea>
+          <textarea
+            id="messageInput"
+            rows="3"
+            placeholder="Example: Please fully introduce the K-POP girl group i-dle and explain each member's background and traits in detail"
+          ></textarea>
           <input id="imageInput" type="file" accept="image/*" hidden />
-          <button id="attachButton" type="button" class="icon-button attach-button" title="Attach image (Gemini only, max 2 MB)">&#128247;</button>
+          <button
+            id="attachButton"
+            type="button"
+            class="icon-button attach-button"
+            title="Attach image (Gemini only, max 2 MB)"
+          >
+            &#128247;
+          </button>
           <button id="sendButton" type="submit">Send</button>
         </form>
       </div>
