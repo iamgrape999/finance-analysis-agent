@@ -72,6 +72,47 @@ BF_LOCKOUT_SEC   = int(os.getenv("BF_LOCKOUT_SEC",   "600"))  # 10-minute lockou
 GEMINI_MAX_CONCURRENT = int(os.getenv("GEMINI_MAX_CONCURRENT", "2"))
 _gemini_semaphore = threading.Semaphore(GEMINI_MAX_CONCURRENT)
 
+# ── Daily Gemini hard cap (application-level GCP Quota equivalent) ────────────
+# Resets at UTC midnight. Replaces need to configure GCP Quota on console.
+# Tune via env vars: GEMINI_DAILY_CAP (requests) and GEMINI_DAILY_CHAT_CAP.
+GEMINI_DAILY_IMAGE_CAP = int(os.getenv("GEMINI_DAILY_IMAGE_CAP", "100"))  # image requests/day
+GEMINI_DAILY_CHAT_CAP  = int(os.getenv("GEMINI_DAILY_CHAT_CAP",  "400"))  # all gemini calls/day
+_daily_lock = threading.Lock()
+_daily_gemini_image_count: Dict[str, int] = {}   # {"YYYY-MM-DD": count}
+_daily_gemini_chat_count:  Dict[str, int] = {}
+
+
+def _today_utc() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def _check_daily_gemini(is_image: bool) -> bool:
+    """Returns True if allowed, False if daily cap exceeded."""
+    today = _today_utc()
+    with _daily_lock:
+        store = _daily_gemini_image_count if is_image else _daily_gemini_chat_count
+        cap   = GEMINI_DAILY_IMAGE_CAP    if is_image else GEMINI_DAILY_CHAT_CAP
+        # purge old dates to save memory
+        for old in [k for k in store if k != today]:
+            del store[old]
+        current = store.get(today, 0)
+        if current >= cap:
+            return False
+        store[today] = current + 1
+        return True
+
+
+def _daily_gemini_usage() -> Dict[str, Any]:
+    today = _today_utc()
+    with _daily_lock:
+        return {
+            "date": today,
+            "image_requests_today": _daily_gemini_image_count.get(today, 0),
+            "image_daily_cap": GEMINI_DAILY_IMAGE_CAP,
+            "chat_requests_today": _daily_gemini_chat_count.get(today, 0),
+            "chat_daily_cap": GEMINI_DAILY_CHAT_CAP,
+        }
+
 
 def _client_ip(request: Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For", "")
@@ -298,6 +339,7 @@ def health(
             "groq": os.getenv("GROQ_MODEL", GROQ_MODEL),
             "aws": os.getenv("AWS_BEDROCK_MODEL", AWS_BEDROCK_MODEL),
         },
+        "gemini_daily_usage": _daily_gemini_usage(),
     }
 
 
@@ -354,6 +396,11 @@ def chat(
     if has_image and (not _check_rate_limit(_rl_image, user_id, RATE_IMAGE_MAX, RATE_WINDOW_SEC) or
                       not _check_rate_limit(_rl_image_ip, ip, RATE_IMAGE_IP_MAX, RATE_WINDOW_SEC)):
         raise HTTPException(status_code=429, detail=f"圖片請求過於頻繁，請稍後再試（每 {RATE_WINDOW_SEC} 秒限 {RATE_IMAGE_MAX} 次）。")
+    # daily hard cap — application-level equivalent of GCP Quota
+    if has_image and not _check_daily_gemini(is_image=True):
+        raise HTTPException(status_code=429, detail=f"今日圖片分析已達每日上限（{GEMINI_DAILY_IMAGE_CAP} 次），UTC 00:00 重置。")
+    if not _check_daily_gemini(is_image=False):
+        raise HTTPException(status_code=429, detail=f"今日 Gemini 呼叫已達每日上限（{GEMINI_DAILY_CHAT_CAP} 次），UTC 00:00 重置。")
     return _chat_impl(req, user_id=user_id)
 
 

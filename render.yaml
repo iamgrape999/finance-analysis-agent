@@ -38,3 +38,7 @@ services:
         sync: false
       - key: AWS_REGION
         value: us-east-1
+      - key: GEMINI_DAILY_IMAGE_CAP
+        value: "100"
+      - key: GEMINI_DAILY_CHAT_CAP
+        value: "400"
