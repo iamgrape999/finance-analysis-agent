@@ -4,7 +4,9 @@ import os
 import re
 import hmac
 import threading
+import time
 import traceback
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -45,6 +47,62 @@ from Finance_Analysis_Agent_V581 import (
 
 
 _ENV_LOCK = threading.Lock()
+
+# ── Rate limiting (in-memory, single-process safe) ────────────────────────────
+_RL_LOCK = threading.Lock()
+_rl_chat: Dict[str, List[float]] = defaultdict(list)   # user_id → timestamps
+_rl_image: Dict[str, List[float]] = defaultdict(list)  # user_id → timestamps
+
+RATE_CHAT_MAX  = int(os.getenv("RATE_CHAT_MAX",  "30"))   # requests per window
+RATE_IMAGE_MAX = int(os.getenv("RATE_IMAGE_MAX", "6"))    # stricter for Gemini
+RATE_WINDOW_SEC = int(os.getenv("RATE_WINDOW_SEC", "60")) # rolling window
+
+# ── Brute-force lockout ───────────────────────────────────────────────────────
+_BF_LOCK = threading.Lock()
+_bf_failures: Dict[str, List[float]] = defaultdict(list)  # ip → fail timestamps
+BF_MAX_FAILURES  = int(os.getenv("BF_MAX_FAILURES",  "10"))
+BF_WINDOW_SEC    = int(os.getenv("BF_WINDOW_SEC",    "300"))  # 5-minute window
+BF_LOCKOUT_SEC   = int(os.getenv("BF_LOCKOUT_SEC",   "600"))  # 10-minute lockout
+
+# ── Gemini concurrency cap ────────────────────────────────────────────────────
+GEMINI_MAX_CONCURRENT = int(os.getenv("GEMINI_MAX_CONCURRENT", "2"))
+_gemini_semaphore = threading.Semaphore(GEMINI_MAX_CONCURRENT)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    return (forwarded.split(",")[0].strip() or request.client.host or "unknown")[:64]
+
+
+def _check_rate_limit(store: Dict[str, List[float]], key: str, max_req: int, window: int) -> bool:
+    now = time.monotonic()
+    with _RL_LOCK:
+        times = store[key]
+        times[:] = [t for t in times if now - t < window]
+        if len(times) >= max_req:
+            return False
+        times.append(now)
+        return True
+
+
+def _record_auth_failure(ip: str) -> None:
+    now = time.monotonic()
+    with _BF_LOCK:
+        times = _bf_failures[ip]
+        times[:] = [t for t in times if now - t < BF_WINDOW_SEC]
+        times.append(now)
+
+
+def _is_locked_out(ip: str) -> bool:
+    now = time.monotonic()
+    with _BF_LOCK:
+        times = _bf_failures[ip]
+        times[:] = [t for t in times if now - t < BF_WINDOW_SEC]
+        if len(times) >= BF_MAX_FAILURES:
+            # still within lockout if last failure is recent enough
+            return (now - times[-1]) < BF_LOCKOUT_SEC
+        return False
+
 
 APP_NAME = os.getenv("APP_NAME", "CathyChang AI")
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
@@ -174,9 +232,14 @@ def configured_users() -> Dict[str, str]:
 
 
 def require_auth(
+    request: Optional[Request] = None,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> str:
+    ip = _client_ip(request) if request else "unknown"
+    if _is_locked_out(ip):
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
+
     user_id = re.sub(r"[^A-Za-z0-9._-]+", "_", (x_user_id or "").strip())[:80]
     if not user_id:
         raise HTTPException(status_code=400, detail="Missing X-User-Id")
@@ -186,20 +249,23 @@ def require_auth(
     if users:
         expected = users.get(user_id)
         if not expected or not hmac.compare_digest(password, expected):
+            _record_auth_failure(ip)
             raise HTTPException(status_code=401, detail="Invalid user id or password")
         return user_id
 
     if APP_PASSWORD and not hmac.compare_digest(password, APP_PASSWORD):
+        _record_auth_failure(ip)
         raise HTTPException(status_code=401, detail="Invalid app password")
     return user_id
 
 
 @app.get("/api/health")
 def health(
+    request: Request,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(request, x_app_password, x_user_id)
     users = configured_users()
     return {
         "ok": True,
@@ -267,10 +333,16 @@ def healthz(
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(
     req: ChatRequest,
+    request: Request,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> ChatResponse:
-    user_id = require_auth(x_app_password, x_user_id)
+    user_id = require_auth(request, x_app_password, x_user_id)
+    has_image = bool(req.image_base64)
+    if not _check_rate_limit(_rl_chat, user_id, RATE_CHAT_MAX, RATE_WINDOW_SEC):
+        raise HTTPException(status_code=429, detail=f"請求過於頻繁，請稍後再試（每 {RATE_WINDOW_SEC} 秒限 {RATE_CHAT_MAX} 次）。")
+    if has_image and not _check_rate_limit(_rl_image, user_id, RATE_IMAGE_MAX, RATE_WINDOW_SEC):
+        raise HTTPException(status_code=429, detail=f"圖片請求過於頻繁，請稍後再試（每 {RATE_WINDOW_SEC} 秒限 {RATE_IMAGE_MAX} 次）。")
     return _chat_impl(req, user_id=user_id)
 
 
@@ -286,13 +358,18 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
     effective_max_tokens = int(req.max_tokens or mode_default_tokens)
     if enforce_min_tokens:
         effective_max_tokens = max(256, effective_max_tokens)
+    gemini_lock_acquired = False
+    if has_image:
+        gemini_lock_acquired = _gemini_semaphore.acquire(blocking=True, timeout=10)
+        if not gemini_lock_acquired:
+            raise HTTPException(status_code=503, detail="伺服器正忙，Gemini 圖片分析請求已達上限，請稍後再試。")
     try:
         result = chat_once_detailed(
             memory=None,
             THREAD_ID=req.thread_id,
             user_text_or_prompt=req.message,
             print_reply=False,
-            max_tokens_override=effective_max_tokens,
+            max_tokens_override=min(effective_max_tokens, 4096 if has_image else effective_max_tokens),
             temperature_override=req.temperature,
             use_history=req.use_history,
             history_turns=req.history_turns,
@@ -307,6 +384,8 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             image_mime_type=req.image_mime_type or None,
         )
     except Exception as exc:
+        if gemini_lock_acquired:
+            _gemini_semaphore.release()
         traceback.print_exc()
         error_context = {
             "phase": "chat_once_detailed",
@@ -323,6 +402,9 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             status_code=500,
             detail=f"{type(exc).__name__}: {exc}; context={error_context}",
         ) from exc
+    finally:
+        if gemini_lock_acquired:
+            _gemini_semaphore.release()
     meta = result.get("meta", {}) if isinstance(result, dict) else {}
     return ChatResponse(
         thread_id=req.thread_id,
