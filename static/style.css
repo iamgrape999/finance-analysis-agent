@@ -520,13 +520,16 @@ h1 {
 
 .image-preview {
   grid-column: 1 / -1;
-  display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+.image-preview:not([hidden]) {
+  display: flex;
 }
 
 .image-preview img {
