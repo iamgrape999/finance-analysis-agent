@@ -156,7 +156,7 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
 WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "3"))
 WEB_SEARCH_TIMEOUT_SEC = int(os.getenv("WEB_SEARCH_TIMEOUT_SEC", "8"))
-WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("WEB_SEARCH_MAX_CONTEXT_CHARS", "2400"))
+WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("WEB_SEARCH_MAX_CONTEXT_CHARS", "4800"))
 LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS = int(os.getenv("LIGHT_WEB_SEARCH_MAX_CONTEXT_CHARS", "900"))
 GLOBAL_FACT_VALUE_MAX_CHARS = int(os.getenv("GLOBAL_FACT_VALUE_MAX_CHARS", "500"))
 WEB_SEARCH_SEARCH_DEPTH = os.getenv("WEB_SEARCH_SEARCH_DEPTH", "basic").strip() or "basic"
@@ -538,11 +538,19 @@ def search_intent_classifier(query: str) -> Dict[str, Any]:
     }
 
 
-def _search_web_tavily(query: str) -> Dict[str, Any]:
-    if not TAVILY_API_KEY:
-        raise RuntimeError("TAVILY_API_KEY is not configured")
+_WIKI_DOMAINS: List[str] = [
+    "wikipedia.org",
+    "zh.wikipedia.org",
+    "en.wikipedia.org",
+    "kprofiles.com",
+    "kpop.fandom.com",
+    "namu.wiki",
+]
+
+
+def _tavily_fetch(query: str, include_domains: Optional[List[str]] = None) -> Dict[str, Any]:
     fetch_count = min(int(WEB_SEARCH_MAX_RESULTS) * 2, 10)
-    payload = {
+    payload: Dict[str, Any] = {
         "api_key": TAVILY_API_KEY,
         "query": strip_redundant(query or ""),
         "topic": WEB_SEARCH_TOPIC,
@@ -550,8 +558,11 @@ def _search_web_tavily(query: str) -> Dict[str, Any]:
         "max_results": fetch_count,
         "include_answer": False,
         "include_raw_content": False,
-        "exclude_domains": _TAVILY_EXCLUDE_DOMAINS,
     }
+    if include_domains:
+        payload["include_domains"] = include_domains
+    else:
+        payload["exclude_domains"] = _TAVILY_EXCLUDE_DOMAINS
     response = requests.post(
         "https://api.tavily.com/search",
         json=payload,
@@ -560,28 +571,57 @@ def _search_web_tavily(query: str) -> Dict[str, Any]:
     if response.status_code >= 400:
         body = (response.text or "")[:800].replace("\n", "\\n").replace("\r", "\\r")
         raise RuntimeError(f"Tavily error {response.status_code}: {body}")
-    data = response.json() or {}
-    normalized_results: List[Dict[str, Any]] = []
+    return response.json() or {}
+
+
+def _search_web_tavily(query: str) -> Dict[str, Any]:
+    if not TAVILY_API_KEY:
+        raise RuntimeError("TAVILY_API_KEY is not configured")
     want = int(WEB_SEARCH_MAX_RESULTS)
-    for item in data.get("results") or []:
-        score = float(item.get("score") or 0)
-        if score < _TAVILY_MIN_SCORE:
-            continue
-        normalized_results.append(
-            {
+
+    # First pass: Wikipedia + kpop wiki domains for factual grounding
+    wiki_results: List[Dict[str, Any]] = []
+    try:
+        wiki_data = _tavily_fetch(query, include_domains=_WIKI_DOMAINS)
+        for item in wiki_data.get("results") or []:
+            score = float(item.get("score") or 0)
+            if score < _TAVILY_MIN_SCORE:
+                continue
+            wiki_results.append({
                 "title": str(item.get("title") or "").strip(),
                 "url": str(item.get("url") or "").strip(),
                 "content": strip_redundant(str(item.get("content") or "")),
                 "score": score,
-            }
-        )
-        if len(normalized_results) >= want:
+            })
+            if len(wiki_results) >= max(1, want - 1):
+                break
+    except Exception:
+        pass
+
+    # Second pass: general search to fill remaining slots
+    general_data = _tavily_fetch(query)
+    seen_urls = {r["url"] for r in wiki_results}
+    general_results: List[Dict[str, Any]] = []
+    for item in general_data.get("results") or []:
+        score = float(item.get("score") or 0)
+        url = str(item.get("url") or "").strip()
+        if score < _TAVILY_MIN_SCORE or url in seen_urls:
+            continue
+        general_results.append({
+            "title": str(item.get("title") or "").strip(),
+            "url": url,
+            "content": strip_redundant(str(item.get("content") or "")),
+            "score": score,
+        })
+        if len(wiki_results) + len(general_results) >= want:
             break
+
+    normalized_results = (wiki_results + general_results)[:want]
     return {
         "provider": "tavily",
-        "query": payload["query"],
+        "query": strip_redundant(query or ""),
         "results": normalized_results,
-        "response_time": data.get("response_time"),
+        "response_time": general_data.get("response_time"),
     }
 
 
@@ -671,7 +711,7 @@ def _format_web_search_context(search_meta: Dict[str, Any], max_chars: int) -> s
     for idx, item in enumerate(results, start=1):
         title = str(item.get("title") or f"結果 {idx}")
         url = str(item.get("url") or "")
-        content = _clip_text(str(item.get("content") or ""), 700, f"搜尋結果 {idx}")
+        content = _clip_text(str(item.get("content") or ""), 1500, f"搜尋結果 {idx}")
         lines.append(f"{idx}. {title}")
         if url:
             lines.append(f"來源：{url}")
