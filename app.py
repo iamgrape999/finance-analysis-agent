@@ -207,6 +207,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Credit Report AI Pipeline ─────────────────────────────────────────────────
+from credit_report import router as credit_report_router  # noqa: E402
+app.include_router(credit_report_router)
+
 
 @app.on_event("startup")
 async def _startup_warning() -> None:
