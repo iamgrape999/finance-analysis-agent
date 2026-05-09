@@ -7,5 +7,7 @@ venv/
 !.env.example
 data/memory/*
 !data/memory/.gitkeep
+data/*.db
+data/credit_reports/
 *.log
 .DS_Store
