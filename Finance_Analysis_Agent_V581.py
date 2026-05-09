@@ -165,7 +165,7 @@ _TAVILY_EXCLUDE_DOMAINS: List[str] = [
     d.strip()
     for d in os.getenv(
         "TAVILY_EXCLUDE_DOMAINS",
-        "douyin.com,tiktok.com,instagram.com,twitter.com,x.com,facebook.com,threads.net,weibo.com,xiaohongshu.com,pinterest.com",
+        "douyin.com,tiktok.com,instagram.com,facebook.com,threads.net,weibo.com,xiaohongshu.com,pinterest.com",
     ).split(",")
     if d.strip()
 ]
