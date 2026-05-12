@@ -1,4 +1,5 @@
 import asyncio
+import time
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -310,6 +311,21 @@ class BasicAuthApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
 
+    def test_provider_models_uses_current_auth_signature(self):
+        with patch.object(app, "list_fireworks_catalog_models", return_value=[]), \
+             patch.object(app, "fireworks_model_status", return_value={"name": "", "status_label": "unset"}):
+            response = self.client.get(
+                "/api/provider-models/fireworks",
+                headers={
+                    "X-User-Id": "hanli",
+                    "X-App-Password": "shared-secret",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["provider"], "fireworks")
+
 
 class StartupWarningTests(unittest.TestCase):
     def test_startup_warns_when_auth_is_open(self):
@@ -387,6 +403,21 @@ class FireworksModelStatusTests(unittest.TestCase):
         self.assertFalse(missing_status["online_in_catalog"])
         self.assertFalse(missing_status["serverless_supported"])
         self.assertEqual(missing_status["status_label"], "not_in_account_list")
+
+
+class TimeoutWrapperTests(unittest.TestCase):
+    def test_run_with_timeout_raises_without_waiting_for_full_sleep(self):
+        started = time.perf_counter()
+
+        def _slow() -> str:
+            time.sleep(1.0)
+            return "late"
+
+        with self.assertRaises(RuntimeError):
+            agent._run_with_timeout(_slow, 0.1)
+
+        elapsed = time.perf_counter() - started
+        self.assertLess(elapsed, 0.6)
 
 
 class MaskingTests(unittest.TestCase):

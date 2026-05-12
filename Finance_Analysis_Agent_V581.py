@@ -251,12 +251,17 @@ _CALL_CONTEXT: threading.local = threading.local()
 
 
 def _run_with_timeout(fn: Any, timeout_sec: float) -> Any:
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(fn)
-        try:
-            return future.result(timeout=max(1.0, float(timeout_sec)))
-        except concurrent.futures.TimeoutError:
-            raise RuntimeError(f"Call timed out after {timeout_sec:.0f}s")
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(fn)
+    try:
+        return future.result(timeout=max(1.0, float(timeout_sec)))
+    except concurrent.futures.TimeoutError:
+        future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise RuntimeError(f"Call timed out after {timeout_sec:.0f}s")
+    finally:
+        if future.done():
+            executor.shutdown(wait=True, cancel_futures=False)
 
 
 def _ctx_model(provider_key: str, env_key: str, default_val: str) -> str:

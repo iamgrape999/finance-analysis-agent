@@ -835,7 +835,6 @@ def provider_models(
     provider: str,
     x_app_password: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
-    x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
     # The UI currently authenticates every request with X-App-Password; keep the
     # session-token header accepted for forward compatibility without treating it
