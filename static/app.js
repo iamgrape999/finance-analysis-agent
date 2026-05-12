@@ -170,7 +170,7 @@ const responseModeKey = "finance_agent_response_mode";
 const webSearchProviderKey = "finance_agent_web_search_provider";
 const forceWebSearchKey = "finance_agent_force_web_search";
 const themeModeKey = "finance_agent_theme_mode";
-const FRONTEND_BUILD = "2026-05-08-no-mistral";
+const FRONTEND_BUILD = "2026-05-12-diagnostic-logs";
 const responsePresets = {
   fast: {
     label: "快速短答",
@@ -318,8 +318,19 @@ function friendlyNetworkError(err) {
   return message;
 }
 
-function authHeaders(extra = {}) {
+function makeRequestId() {
+  const rand =
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(16).slice(2, 10);
+  return `web-${Date.now().toString(36)}-${rand}`;
+}
+
+function authHeaders(extra = {}, requestId = "") {
   const headers = { ...extra };
+  if (requestId) {
+    headers["X-Request-ID"] = requestId;
+  }
   if (appPassword) {
     headers["X-App-Password"] = appPassword;
   }
@@ -779,7 +790,7 @@ async function loadThreads() {
     const res = await fetch(apiUrl("/api/threads"), { headers: authHeaders() });
     const data = await res.json().catch(() => []);
     if (!res.ok) {
-      throw new Error(data.detail || `HTTP ${res.status}`);
+      throw new Error(`${data.detail || `HTTP ${res.status}`} (request_id=${responseRequestId})`);
     }
     threadList.innerHTML = "";
     if (!data.length) {
@@ -823,7 +834,7 @@ async function loadThread(threadIdToLoad) {
     );
     const data = await res.json().catch(() => []);
     if (!res.ok) {
-      throw new Error(data.detail || `HTTP ${res.status}`);
+      throw new Error(`${data.detail || `HTTP ${res.status}`} (request_id=${responseRequestId})`);
     }
     threadId = threadIdToLoad;
     threadInput.value = threadId;
@@ -849,7 +860,7 @@ async function deleteThread(threadIdToDelete) {
     );
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.ok === false) {
-      throw new Error(data.detail || `HTTP ${res.status}`);
+      throw new Error(`${data.detail || `HTTP ${res.status}`} (request_id=${responseRequestId})`);
     }
     if (threadIdToDelete === threadId) {
       threadId = makeThreadId();
@@ -873,7 +884,7 @@ async function loadGlobalMemory() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.detail || `HTTP ${res.status}`);
+      throw new Error(`${data.detail || `HTTP ${res.status}`} (request_id=${responseRequestId})`);
     }
     renderGlobalMemory(data.facts || {});
   } catch (err) {
@@ -961,7 +972,7 @@ async function deleteGlobalMemory(key) {
     );
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.detail || `HTTP ${res.status}`);
+      throw new Error(`${data.detail || `HTTP ${res.status}`} (request_id=${responseRequestId})`);
     }
     renderGlobalMemory(data.facts || {});
     log(`deleted global memory: ${key}`, "OK");
@@ -1106,8 +1117,9 @@ async function sendMessage(message, endpoint = "/api/chat") {
       "TRACE",
     );
   }
+  const requestId = makeRequestId();
   log(
-    `calling ${endpoint}; user=${userId}; thread=${threadId}; provider_order=${imageSnapshot ? "gemini" : effectiveProviderOrder || "backend"}`,
+    `calling ${endpoint}; request_id=${requestId}; user=${userId}; thread=${threadId}; provider_order=${imageSnapshot ? "gemini" : effectiveProviderOrder || "backend"}`,
     "CALL",
   );
   log(
@@ -1136,7 +1148,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
     );
     const res = await fetch(apiUrl(endpoint), {
       method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
+      headers: authHeaders({ "Content-Type": "application/json" }, requestId),
       signal: controller.signal,
       body: JSON.stringify({
         thread_id: threadId,
@@ -1160,6 +1172,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
       }),
     });
 
+    const responseRequestId = res.headers.get("X-Request-ID") || requestId;
     const data = await res.json();
     if (res.status === 401) {
       setUnlocked(false);
@@ -1167,7 +1180,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
       throw new Error("Invalid app password");
     }
     if (!res.ok) {
-      throw new Error(data.detail || `HTTP ${res.status}`);
+      throw new Error(`${data.detail || `HTTP ${res.status}`} (request_id=${responseRequestId})`);
     }
     addMessage("assistant", data.reply, {
       provider: data.provider,
@@ -1178,7 +1191,9 @@ async function sendMessage(message, endpoint = "/api/chat") {
       failover_errors: data.failover_errors,
       continue_rounds: data.continue_rounds,
       web_search: data.web_search,
+      request_id: data.request_id || responseRequestId,
     });
+    log(`response request_id=${data.request_id || responseRequestId}`, "TRACE");
     if (data.failover_errors?.length) {
       log(
         `failover: ${data.failover_errors.map((item) => `${item.provider} -> ${item.error}`).join(" ; ")}`,
@@ -1201,7 +1216,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
       log(`route timeout budget=${data.route_timeout_sec}s`, "TRACE");
     }
     log(
-      `reply ok; provider=${data.provider || "unknown"} model=${data.model || "unknown"} latency=${data.latency_s ?? ((performance.now() - started) / 1000).toFixed(2)}s`,
+      `reply ok; request_id=${data.request_id || responseRequestId}; provider=${data.provider || "unknown"} model=${data.model || "unknown"} latency=${data.latency_s ?? ((performance.now() - started) / 1000).toFixed(2)}s`,
       "OK",
     );
     loadThreads();
@@ -1213,7 +1228,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
         : friendlyNetworkError(err);
     addMessage("assistant", `發生錯誤：${rawMessage}`);
     log(
-      `chat failed: ${err?.name || "Error"} ${err?.message || String(err)}; thread=${threadId}; provider_order=${effectiveProviderOrder || "backend"}`,
+      `chat failed: request_id=${requestId}; ${err?.name || "Error"} ${err?.message || String(err)}; thread=${threadId}; provider_order=${effectiveProviderOrder || "backend"}`,
       "FAIL",
     );
     if (
@@ -1222,7 +1237,7 @@ async function sendMessage(message, endpoint = "/api/chat") {
     ) {
       log(`syntax error details: ${formatErrorDetails(err)}`, "TRACE");
       log(
-        `syntax error context: api_base=${apiBaseInput.value || "(same origin)"}; provider_order=${effectiveProviderOrder || "backend"}; user=${userId}; thread=${threadId}`,
+        `syntax error context: request_id=${requestId}; api_base=${apiBaseInput.value || "(same origin)"}; provider_order=${effectiveProviderOrder || "backend"}; user=${userId}; thread=${threadId}`,
         "TRACE",
       );
     }

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Deployment-safe Finance/Analysis Agent wrapper.
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import concurrent.futures
 import json
+import logging
 import os
 import re
 import shutil
@@ -37,6 +38,14 @@ except Exception:
     pass
 
 
+LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG" if os.getenv("DEBUG", "false").lower() == "true" else "INFO").upper()
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+logger = logging.getLogger("finance_agent.core")
+logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 MEMORY_ROOT = os.environ.get("MEMORY_ROOT", "./data/memory")
@@ -261,9 +270,14 @@ class ModelReply:
     meta: Dict[str, Any]
 
 
+def _safe_log_value(value: Any, max_chars: int = 500) -> str:
+    text = str(value).replace("\n", " ")
+    return text[:max_chars]
+
+
 def debug_log(*parts: Any) -> None:
     if DEBUG:
-        print("[DEBUG]", *parts)
+        logger.debug(" ".join(_safe_log_value(part) for part in parts))
 
 
 def _sanitize_thread_id(value: str) -> str:
@@ -950,10 +964,14 @@ def load_global_facts(user_id: Optional[str] = None) -> Dict[str, Any]:
         return {}
 
 
+def _sanitize_fact_key(key: Any) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(key).strip())[:80]
+
+
 def save_global_facts(facts: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     clean = {}
     for key, value in (facts or {}).items():
-        k = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(key).strip())[:80]
+        k = _sanitize_fact_key(key)
         if not k:
             continue
         clean[k] = {
@@ -969,7 +987,7 @@ def upsert_global_fact(key: str, value: str, user_id: Optional[str] = None) -> D
     raw_key = str(key).strip()
     if "=" in raw_key and not str(value).strip():
         raw_key, value = raw_key.split("=", 1)
-    k = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_key.strip())[:80]
+    k = _sanitize_fact_key(raw_key)
     if not k:
         return facts
     facts[k] = {"value": str(value).strip()[:GLOBAL_FACT_VALUE_MAX_CHARS], "ts": datetime.now().isoformat()}
@@ -978,7 +996,7 @@ def upsert_global_fact(key: str, value: str, user_id: Optional[str] = None) -> D
 
 def delete_global_fact(key: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     facts = load_global_facts(user_id)
-    facts.pop(str(key).strip(), None)
+    facts.pop(_sanitize_fact_key(key), None)
     return save_global_facts(facts, user_id)
 
 
@@ -1024,11 +1042,15 @@ def list_thread_summaries(user_id: Optional[str] = None) -> List[Dict[str, Any]]
             except Exception:
                 pass
         preview = ""
+        message_count = 0
         try:
             with open(chat_path, "r", encoding="utf-8", errors="replace") as _fh2:
                 for ln in _fh2:
                     ln = ln.strip()
                     if not ln:
+                        continue
+                    message_count += 1
+                    if preview:
                         continue
                     try:
                         row = json.loads(ln)
@@ -1036,10 +1058,8 @@ def list_thread_summaries(user_id: Optional[str] = None) -> List[Dict[str, Any]]
                         continue
                     if row.get("role") == "user" and row.get("content"):
                         preview = strip_redundant(str(row["content"]))[:120]
-                        break
         except OSError:
-            pass
-        message_count = sum(1 for ln in tail_lines if ln.strip())
+            message_count = len(tail_lines)
         updated_at = last_row.get("ts", "")
         try:
             mtime = os.path.getmtime(chat_path)
@@ -1849,7 +1869,15 @@ def route_generate(
     disable_auto_continue: bool = False,
 ) -> ModelReply:
     providers = resolve_provider_order()
+    logger.info(
+        "route_start mode=%s providers=%s max_tokens=%s auto_continue=%s",
+        response_mode,
+        ",".join(providers) or "none",
+        max_tokens,
+        not disable_auto_continue,
+    )
     if not providers:
+        logger.warning("route_no_providers mode=%s", response_mode)
         return ModelReply(local_fallback_generate(str(prompt or "")), {"provider": "local_fallback"})
 
     if isinstance(prompt, dict):
@@ -1871,6 +1899,12 @@ def route_generate(
         per_attempt_timeout_sec = _per_attempt_timeout_budget(response_mode, provider)
         route_elapsed_sec = time.perf_counter() - route_started
         if route_elapsed_sec >= route_timeout_sec:
+            logger.warning(
+                "route_budget_exhausted provider=%s elapsed_ms=%s budget_sec=%s",
+                provider,
+                round(route_elapsed_sec * 1000, 1),
+                route_timeout_sec,
+            )
             provider_trace.append({
                 "provider": provider,
                 "status": "skipped",
@@ -1886,6 +1920,7 @@ def route_generate(
         attempts.append(provider)
         trace: Dict[str, Any] = {"provider": provider}
         started = None
+        logger.info("provider_attempt_start provider=%s mode=%s attempt_timeout_sec=%s", provider, response_mode, per_attempt_timeout_sec)
         try:
             remaining_budget_sec = max(3.0, route_timeout_sec - (time.perf_counter() - route_started))
             effective_attempt_timeout_sec = min(remaining_budget_sec, float(per_attempt_timeout_sec))
@@ -1921,6 +1956,7 @@ def route_generate(
                         "reason": reason,
                     })
                     provider_trace.append(trace)
+                    logger.warning("provider_skipped provider=%s reason=%s prompt_tokens=%s", provider, reason, prompt_meta.get("prompt_tokens"))
                     debug_log(provider, f"skip {reason}")
                     continue
 
@@ -1951,12 +1987,25 @@ def route_generate(
             trace["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
             trace["status"] = "ok"
             provider_trace.append(trace)
+            logger.info(
+                "provider_attempt_ok provider=%s elapsed_ms=%s prompt_tokens=%s request_bytes=%s",
+                provider,
+                trace["elapsed_ms"],
+                trace.get("prompt_tokens"),
+                trace.get("estimated_request_bytes"),
+            )
             if reply is not None:
                 reply.meta = dict(reply.meta or {})
                 continue_rounds = 0
                 while continue_rounds < max_continue_rounds and _needs_auto_continue(reply, effective_max_tokens):
                     remaining_continue_budget_sec = route_timeout_sec - (time.perf_counter() - route_started)
                     if remaining_continue_budget_sec <= 5:
+                        logger.warning(
+                            "provider_continue_budget_exhausted provider=%s rounds=%s remaining_sec=%s",
+                            provider,
+                            continue_rounds,
+                            round(max(0.0, remaining_continue_budget_sec), 1),
+                        )
                         provider_trace.append({
                             "provider": provider,
                             "status": "skipped",
@@ -1999,6 +2048,13 @@ def route_generate(
                     continue_trace["elapsed_ms"] = round((time.perf_counter() - continue_started) * 1000, 1)
                     continue_trace["status"] = "ok" if continuation and strip_redundant(continuation.text) else "error"
                     provider_trace.append(continue_trace)
+                    logger.info(
+                        "provider_continue_done provider=%s round=%s status=%s elapsed_ms=%s",
+                        provider,
+                        continue_rounds,
+                        continue_trace["status"],
+                        continue_trace["elapsed_ms"],
+                    )
                     if not continuation or not strip_redundant(continuation.text):
                         break
                     reply.text = strip_redundant((reply.text or "").rstrip() + "\n" + strip_redundant(continuation.text))
@@ -2027,6 +2083,13 @@ def route_generate(
                     reply.meta["failover_errors"] = [{"provider": p, "error": e} for p, e in errors]
                 reply.meta["route_timeout_sec"] = route_timeout_sec
                 best_reply = reply
+                logger.info(
+                    "route_success provider=%s attempts=%s continue_rounds=%s elapsed_ms=%s",
+                    provider,
+                    attempts[:],
+                    continue_rounds,
+                    round((time.perf_counter() - route_started) * 1000, 1),
+                )
                 return reply
         except Exception as exc:
             errors.append((provider, str(exc)))
@@ -2034,6 +2097,12 @@ def route_generate(
             trace["status"] = "error"
             trace["reason"] = str(exc)
             provider_trace.append(trace)
+            logger.warning(
+                "provider_attempt_error provider=%s elapsed_ms=%s error=%s",
+                provider,
+                trace["elapsed_ms"],
+                _safe_log_value(exc),
+            )
             debug_log(provider, exc)
 
     route_elapsed_ms = round((time.perf_counter() - route_started) * 1000, 1)
@@ -2052,6 +2121,13 @@ def route_generate(
     provider_error_text = (
         f"指定 provider 無法產生可用回覆。最後錯誤：{errors[-1][0]} -> {errors[-1][1]}"
         if errors else local_fallback_generate(prompt_bundle["heavy"])
+    )
+    logger.error(
+        "route_failed attempts=%s errors=%s elapsed_ms=%s budget_sec=%s",
+        attempts,
+        [{"provider": p, "error": _safe_log_value(e, 200)} for p, e in errors],
+        route_elapsed_ms,
+        route_timeout_sec,
     )
     return ModelReply(
         timeout_text if any("timeout" in str(err).lower() for _, err in errors) else provider_error_text,
@@ -2300,6 +2376,17 @@ def chat_once_detailed(
     _CALL_CONTEXT.image_b64 = (image_base64 or "").strip() or None
     _CALL_CONTEXT.image_mime = (image_mime_type or "image/jpeg").strip()
     user_text = strip_redundant(user_text_or_prompt)
+    logger.info(
+        "chat_once_start user_id=%s thread_id=%s mode=%s history=%s history_turns=%s message_chars=%s has_image=%s provider_override=%s",
+        _sanitize_user_id(user_id or "default"),
+        _sanitize_thread_id(THREAD_ID or "WEB_DEFAULT"),
+        response_mode,
+        use_history,
+        history_turns,
+        len(user_text),
+        bool(image_base64),
+        bool(provider_order_override),
+    )
     if not user_text:
         return {"reply": "請輸入問題。", "meta": {"provider": "local"}}
 
@@ -2313,6 +2400,13 @@ def chat_once_detailed(
 
     adapter = MemoryAdapter(memory=memory, THREAD_ID=THREAD_ID or "WEB_DEFAULT", USER_ID=user_id)
     search_decision = search_intent_classifier(user_text)
+    logger.info(
+        "search_decision thread_id=%s must_search=%s priority=%s reason=%s",
+        adapter.thread_id,
+        search_decision.get("must_search"),
+        search_decision.get("priority"),
+        _safe_log_value(search_decision.get("reason", ""), 200),
+    )
     if force_web_search and search_decision.get("priority") != "explicit":
         search_decision = {
             "must_search": True,
@@ -2346,8 +2440,17 @@ def chat_once_detailed(
             web_search_meta["attempts"] = raw_search.get("attempts") or []
             web_search_meta["fallback_errors"] = raw_search.get("fallback_errors") or []
             external_context = _format_web_search_context(raw_search, WEB_SEARCH_MAX_CONTEXT_CHARS)
+            logger.info(
+                "web_search_done provider=%s used=%s results=%s attempts=%s response_time=%s",
+                web_search_meta.get("provider"),
+                web_search_meta.get("used"),
+                len(web_search_meta.get("results") or []),
+                web_search_meta.get("attempts") or [],
+                web_search_meta.get("response_time"),
+            )
         except Exception as exc:
             web_search_meta["error"] = f"{type(exc).__name__}: {exc}"
+            logger.warning("web_search_error error=%s", _safe_log_value(web_search_meta["error"]))
             debug_log("web_search", web_search_meta["error"])
     heavy_prompt = _build_context_variant(
         adapter,
@@ -2366,13 +2469,25 @@ def chat_once_detailed(
         external_context=external_context,
     )
 
+    logger.info(
+        "prompt_built thread_id=%s heavy_tokens=%s heavy_chars=%s light_tokens=%s light_chars=%s external_context_chars=%s",
+        adapter.thread_id,
+        token_est(heavy_prompt),
+        len(heavy_prompt),
+        token_est(light_prompt),
+        len(light_prompt),
+        len(external_context),
+    )
+
     try:
         upsert_global_facts_from_text(user_text, user_id=user_id)
     except Exception as exc:
+        logger.warning("memory_upsert_global_facts_failed thread_id=%s error=%s", adapter.thread_id, _safe_log_value(exc))
         debug_log("memory", f"failed to upsert global facts: {type(exc).__name__}: {exc}")
     try:
         adapter.add_turn("user", user_text)
     except Exception as exc:
+        logger.warning("memory_persist_user_failed thread_id=%s error=%s", adapter.thread_id, _safe_log_value(exc))
         debug_log("memory", f"failed to persist user turn: {type(exc).__name__}: {exc}")
     t0 = time.perf_counter()
     try:
@@ -2401,13 +2516,23 @@ def chat_once_detailed(
         "light_prompt_tokens": token_est(light_prompt),
         "light_prompt_chars": len(light_prompt),
     }
+    logger.info(
+        "chat_once_done thread_id=%s provider=%s model=%s latency_s=%s reply_chars=%s",
+        adapter.thread_id,
+        meta.get("provider"),
+        meta.get("model"),
+        latency_s,
+        len(assistant_text),
+    )
     try:
         adapter.add_turn("assistant", assistant_text, meta=meta)
     except Exception as exc:
+        logger.warning("memory_persist_assistant_failed thread_id=%s error=%s", adapter.thread_id, _safe_log_value(exc))
         debug_log("memory", f"failed to persist assistant turn: {type(exc).__name__}: {exc}")
     try:
         _update_summary(adapter)
     except Exception as exc:
+        logger.warning("memory_update_summary_failed thread_id=%s error=%s", adapter.thread_id, _safe_log_value(exc))
         debug_log("memory", f"failed to update summary: {type(exc).__name__}: {exc}")
 
     if print_reply:
