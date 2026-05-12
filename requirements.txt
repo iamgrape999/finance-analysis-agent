@@ -7,4 +7,3 @@ google-genai
 boto3
 botocore
 cerebras-cloud-sdk
-mistralai
