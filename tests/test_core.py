@@ -55,6 +55,25 @@ class MemoryIsolationTests(unittest.TestCase):
         facts = agent.load_global_facts(user_id="hanli")
         self.assertEqual(len(facts["notes"]["value"]), agent.GLOBAL_FACT_VALUE_MAX_CHARS)
 
+    def test_global_fact_delete_uses_same_sanitized_key_as_upsert(self):
+        agent.upsert_global_fact("favorite stock", "NVDA", user_id="hanli")
+        self.assertIn("favorite_stock", agent.load_global_facts(user_id="hanli"))
+
+        facts = agent.delete_global_fact("favorite stock", user_id="hanli")
+
+        self.assertNotIn("favorite_stock", facts)
+
+    def test_thread_summaries_count_more_than_tail_window(self):
+        adapter = agent.MemoryAdapter(memory=None, THREAD_ID="THREAD_LONG", USER_ID="hanli")
+        for idx in range(260):
+            adapter.add_turn("user" if idx % 2 == 0 else "assistant", f"message-{idx:03d}-" + ("x" * 80))
+
+        summaries = agent.list_thread_summaries(user_id="hanli")
+
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0]["message_count"], 260)
+        self.assertIn("message-000", summaries[0]["preview"])
+
     def test_thread_summaries_use_lightweight_paths(self):
         adapter = agent.MemoryAdapter(memory=None, THREAD_ID="THREAD_LIGHT", USER_ID="hanli")
         adapter.add_turn("user", "preview-text")
@@ -66,6 +85,16 @@ class MemoryIsolationTests(unittest.TestCase):
 
 
 class ProviderOverrideTests(unittest.TestCase):
+    def setUp(self):
+        self.old_daily_counts = dict(app._daily_counts)
+        self.old_gemini_chat_cap = app.GEMINI_DAILY_CHAT_CAP
+        app._daily_counts.clear()
+
+    def tearDown(self):
+        app._daily_counts.clear()
+        app._daily_counts.update(self.old_daily_counts)
+        app.GEMINI_DAILY_CHAT_CAP = self.old_gemini_chat_cap
+
     def test_chat_impl_passes_request_scoped_overrides(self):
         req = app.ChatRequest(
             thread_id="THREAD_A",
@@ -94,6 +123,7 @@ class ProviderOverrideTests(unittest.TestCase):
             response = app._chat_impl(req, user_id="hanli", enforce_min_tokens=False)
 
         self.assertEqual(response.reply, "ok")
+        self.assertIsNone(response.request_id)
         _, kwargs = mock_chat.call_args
         self.assertEqual(kwargs["provider_order_override"], "mistral,openrouter")
         self.assertEqual(
@@ -101,6 +131,85 @@ class ProviderOverrideTests(unittest.TestCase):
             {"mistral": "mistral-small-latest", "openrouter": "meta-llama/test"},
         )
         self.assertEqual(kwargs["user_id"], "hanli")
+        self.assertEqual(app._daily_counts, {})
+
+    def test_gemini_daily_cap_filters_gemini_without_blocking_other_providers(self):
+        app.GEMINI_DAILY_CHAT_CAP = 1
+        app._daily_counts[app._daily_gemini_key(is_image=False)] = 1
+        req = app.ChatRequest(
+            thread_id="THREAD_CAP",
+            message="hello",
+            response_mode="stable",
+            provider_order="gemini,mistral",
+        )
+
+        with patch.object(app, "chat_once_detailed") as mock_chat:
+            mock_chat.return_value = {
+                "reply": "ok",
+                "meta": {
+                    "provider": "mistral",
+                    "model": "mistral-small-latest",
+                    "usage": {},
+                },
+            }
+
+            response = app._chat_impl(req, user_id="hanli", enforce_min_tokens=False)
+
+        self.assertEqual(response.provider, "mistral")
+        self.assertIsNone(response.request_id)
+        _, kwargs = mock_chat.call_args
+        self.assertEqual(kwargs["provider_order_override"], "mistral")
+
+    def test_successful_gemini_response_increments_chat_daily_usage(self):
+        req = app.ChatRequest(
+            thread_id="THREAD_GEMINI",
+            message="hello",
+            response_mode="stable",
+            provider_order="gemini",
+        )
+
+        with patch.object(app, "chat_once_detailed") as mock_chat:
+            mock_chat.return_value = {
+                "reply": "ok",
+                "meta": {
+                    "provider": "gemini",
+                    "model": "gemini-test",
+                    "usage": {},
+                },
+            }
+
+            response = app._chat_impl(req, user_id="hanli", enforce_min_tokens=False)
+
+        self.assertEqual(response.provider, "gemini")
+        self.assertIsNone(response.request_id)
+        self.assertEqual(app._daily_counts[app._daily_gemini_key(is_image=False)], 1)
+
+    def test_chat_impl_includes_request_id_when_provided(self):
+        req = app.ChatRequest(
+            thread_id="THREAD_REQ_ID",
+            message="hello",
+            response_mode="stable",
+            provider_order="mistral",
+        )
+
+        with patch.object(app, "chat_once_detailed") as mock_chat:
+            mock_chat.return_value = {
+                "reply": "ok",
+                "meta": {
+                    "provider": "mistral",
+                    "model": "mistral-small-latest",
+                    "usage": {},
+                },
+            }
+
+            response = app._chat_impl(
+                req,
+                user_id="hanli",
+                enforce_min_tokens=False,
+                request_id="test-request-123",
+            )
+
+        self.assertEqual(response.request_id, "test-request-123")
 
 
 class BasicAuthApiTests(unittest.TestCase):
@@ -108,12 +217,16 @@ class BasicAuthApiTests(unittest.TestCase):
         self.client = TestClient(app.app)
         self.old_app_password = app.APP_PASSWORD
         self.old_app_users_raw = app.APP_USERS_RAW
+        self.old_bf_failures = {key: list(value) for key, value in app._bf_failures.items()}
         app.APP_PASSWORD = "shared-secret"
         app.APP_USERS_RAW = ""
+        app._bf_failures.clear()
 
     def tearDown(self):
         app.APP_PASSWORD = self.old_app_password
         app.APP_USERS_RAW = self.old_app_users_raw
+        app._bf_failures.clear()
+        app._bf_failures.update({key: list(value) for key, value in self.old_bf_failures.items()})
 
     def test_health_accepts_shared_password(self):
         response = self.client.get(
@@ -152,6 +265,50 @@ class BasicAuthApiTests(unittest.TestCase):
         )
         self.assertEqual(health.status_code, 401)
         self.assertIn("invalid user id or password", health.json()["detail"].lower())
+
+    def test_successful_auth_clears_failed_attempts_for_client_ip(self):
+        ip = "203.0.113.9"
+        app._record_auth_failure(ip)
+        self.assertIn(ip, app._bf_failures)
+
+        health = self.client.get(
+            "/api/health",
+            headers={
+                "X-Forwarded-For": ip,
+                "X-User-Id": "hanli",
+                "X-App-Password": "shared-secret",
+            },
+        )
+
+        self.assertEqual(health.status_code, 200)
+        self.assertNotIn(ip, app._bf_failures)
+
+    def test_health_returns_request_id_header(self):
+        response = self.client.get(
+            "/api/health",
+            headers={
+                "X-Request-ID": "client-request-1",
+                "X-User-Id": "hanli",
+                "X-App-Password": "shared-secret",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("X-Request-ID"), "client-request-1")
+
+    def test_provider_models_ignores_forward_compatible_session_token_header(self):
+        with patch.object(app, "list_nvidia_free_models", return_value=[]):
+            response = self.client.get(
+                "/api/provider-models/nvidia",
+                headers={
+                    "X-User-Id": "hanli",
+                    "X-App-Password": "shared-secret",
+                    "X-Session-Token": "future-token",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
 
 
 class StartupWarningTests(unittest.TestCase):

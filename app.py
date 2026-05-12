@@ -1,11 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 import re
 import hmac
+import logging
 import threading
 import time
 import traceback
+import uuid
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -47,7 +49,35 @@ from Finance_Analysis_Agent_V581 import (
 )
 
 
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+logger = logging.getLogger("finance_agent.api")
+logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+
 _ENV_LOCK = threading.Lock()
+_REQUEST_ID_RE = re.compile(r"[^A-Za-z0-9._:-]+")
+
+
+def _new_request_id(value: Optional[str] = None) -> str:
+    candidate = _REQUEST_ID_RE.sub("_", (value or "").strip())[:80]
+    return candidate or uuid.uuid4().hex[:16]
+
+
+def _request_id(request: Optional[Request]) -> str:
+    if request is None:
+        return "-"
+    return str(getattr(request.state, "request_id", "-") or "-")
+
+
+def _exc_summary(exc: Exception) -> str:
+    message = str(exc).replace("\n", " ")
+    return f"{type(exc).__name__}: {message[:500]}"
+
 
 # ── Rate limiting (in-memory, single-process safe) ────────────────────────────
 _RL_LOCK = threading.Lock()
@@ -115,22 +145,42 @@ def _save_daily_counts(data: Dict[str, Any]) -> None:
 _daily_counts: Dict[str, Any] = _load_daily_counts()
 
 
-def _check_daily_gemini(is_image: bool) -> bool:
+def _daily_gemini_key(is_image: bool) -> str:
+    return f"{_today_utc()}:{'image' if is_image else 'chat'}"
+
+
+def _daily_gemini_cap(is_image: bool) -> int:
+    return GEMINI_DAILY_IMAGE_CAP if is_image else GEMINI_DAILY_CHAT_CAP
+
+
+def _purge_stale_daily_counts() -> None:
     today = _today_utc()
-    image_key = f"{today}:image"
-    chat_key  = f"{today}:chat"
+    for old in [k for k in _daily_counts if not k.startswith(today)]:
+        del _daily_counts[old]
+
+
+def _daily_gemini_at_cap(is_image: bool) -> bool:
+    key = _daily_gemini_key(is_image)
     with _daily_lock:
-        # purge old keys
-        for old in [k for k in _daily_counts if not k.startswith(today)]:
-            del _daily_counts[old]
-        key = image_key if is_image else chat_key
-        cap = GEMINI_DAILY_IMAGE_CAP if is_image else GEMINI_DAILY_CHAT_CAP
-        current = _daily_counts.get(key, 0)
-        if current >= cap:
+        _purge_stale_daily_counts()
+        return int(_daily_counts.get(key, 0)) >= _daily_gemini_cap(is_image)
+
+
+def _consume_daily_gemini(is_image: bool) -> bool:
+    key = _daily_gemini_key(is_image)
+    with _daily_lock:
+        _purge_stale_daily_counts()
+        current = int(_daily_counts.get(key, 0))
+        if current >= _daily_gemini_cap(is_image):
             return False
         _daily_counts[key] = current + 1
         _save_daily_counts(dict(_daily_counts))
         return True
+
+
+def _check_daily_gemini(is_image: bool) -> bool:
+    # Backwards-compatible wrapper for tests and external callers.
+    return _consume_daily_gemini(is_image)
 
 
 def _daily_gemini_usage() -> Dict[str, Any]:
@@ -167,6 +217,11 @@ def _record_auth_failure(ip: str) -> None:
         times = _bf_failures[ip]
         times[:] = [t for t in times if now - t < BF_WINDOW_SEC]
         times.append(now)
+
+
+def _clear_auth_failures(ip: str) -> None:
+    with _BF_LOCK:
+        _bf_failures.pop(ip, None)
 
 
 def _is_locked_out(ip: str) -> bool:
@@ -221,13 +276,49 @@ async def _startup_warning() -> None:
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next) -> Response:
-    response = await call_next(request)
+    request_id = _new_request_id(request.headers.get("X-Request-ID"))
+    request.state.request_id = request_id
+    started = time.perf_counter()
+    is_api = request.url.path.startswith("/api/")
+    if is_api:
+        logger.info(
+            "api_request_start request_id=%s method=%s path=%s ip=%s user_header_present=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            _client_ip(request),
+            bool(request.headers.get("X-User-Id")),
+        )
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        logger.exception(
+            "api_request_exception request_id=%s method=%s path=%s elapsed_ms=%s error=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            elapsed_ms,
+            _exc_summary(exc),
+        )
+        raise
+    response.headers.setdefault("X-Request-ID", request_id)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    if request.url.path.startswith("/api/"):
+    if is_api:
         response.headers.setdefault("Cache-Control", "no-store")
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        log_fn = logger.warning if response.status_code >= 400 else logger.info
+        log_fn(
+            "api_request_end request_id=%s method=%s path=%s status=%s elapsed_ms=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
     return response
 
 
@@ -250,6 +341,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     thread_id: str
+    request_id: Optional[str] = None
     reply: str
     provider: Optional[str] = None
     model: Optional[str] = None
@@ -329,12 +421,16 @@ def require_auth(
         expected = users.get(user_id)
         if not expected or not hmac.compare_digest(password, expected):
             _record_auth_failure(ip)
+            logger.warning("auth_failed mode=per_user user_id=%s ip=%s", user_id, ip)
             raise HTTPException(status_code=401, detail="Invalid user id or password")
+        _clear_auth_failures(ip)
         return user_id
 
     if APP_PASSWORD and not hmac.compare_digest(password, APP_PASSWORD):
         _record_auth_failure(ip)
+        logger.warning("auth_failed mode=shared_password user_id=%s ip=%s", user_id, ip)
         raise HTTPException(status_code=401, detail="Invalid app password")
+    _clear_auth_failures(ip)
     return user_id
 
 
@@ -423,28 +519,48 @@ def chat(
     # dual-layer rate limiting: per-user and per-IP (defeats user_id rotation)
     if not _check_rate_limit(_rl_chat, user_id, RATE_CHAT_MAX, RATE_WINDOW_SEC) or \
        not _check_rate_limit(_rl_chat_ip, ip, RATE_CHAT_IP_MAX, RATE_WINDOW_SEC):
+        logger.warning("rate_limited kind=chat request_id=%s user_id=%s ip=%s", _request_id(request), user_id, ip)
         raise HTTPException(status_code=429, detail=f"請求過於頻繁，請稍後再試（每 {RATE_WINDOW_SEC} 秒限 {RATE_CHAT_MAX} 次）。")
     if has_image and (not _check_rate_limit(_rl_image, user_id, RATE_IMAGE_MAX, RATE_WINDOW_SEC) or
                       not _check_rate_limit(_rl_image_ip, ip, RATE_IMAGE_IP_MAX, RATE_WINDOW_SEC)):
+        logger.warning("rate_limited kind=image request_id=%s user_id=%s ip=%s", _request_id(request), user_id, ip)
         raise HTTPException(status_code=429, detail=f"圖片請求過於頻繁，請稍後再試（每 {RATE_WINDOW_SEC} 秒限 {RATE_IMAGE_MAX} 次）。")
-    # daily hard cap — application-level equivalent of GCP Quota
-    if has_image and not _check_daily_gemini(is_image=True):
-        raise HTTPException(status_code=429, detail=f"今日圖片分析已達每日上限（{GEMINI_DAILY_IMAGE_CAP} 次），UTC 00:00 重置。")
-    if not _check_daily_gemini(is_image=False):
-        raise HTTPException(status_code=429, detail=f"今日 Gemini 呼叫已達每日上限（{GEMINI_DAILY_CHAT_CAP} 次），UTC 00:00 重置。")
-    return _chat_impl(req, user_id=user_id)
+    return _chat_impl(req, user_id=user_id, request_id=_request_id(request))
 
 
-def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) -> ChatResponse:
+def _chat_impl(
+    req: ChatRequest,
+    user_id: str,
+    enforce_min_tokens: bool = True,
+    request_id: Optional[str] = None,
+) -> ChatResponse:
+    request_id = request_id or "-"
     has_image = bool(req.image_base64)
+    logger.info(
+        "chat_start request_id=%s user_id=%s thread_id=%s mode=%s message_chars=%s has_image=%s force_web_search=%s",
+        request_id,
+        user_id,
+        req.thread_id,
+        req.response_mode,
+        len(req.message or ""),
+        has_image,
+        req.force_web_search,
+    )
     if has_image:
         if not GEMINI_API_KEY and not GROQ_API_KEY:
             raise HTTPException(status_code=400, detail="圖片分析需要 Gemini 或 Groq API 金鑰，請聯絡管理員設定。")
-        # gemini first; groq (llama-3.2-vision) as free failover
-        vision_providers = ",".join(p for p in ["gemini", "groq"] if (
-            (p == "gemini" and GEMINI_API_KEY) or (p == "groq" and GROQ_API_KEY)
-        ))
-        effective_provider_order = vision_providers
+        # Gemini first when quota is available; Groq vision remains usable after Gemini's daily image cap.
+        vision_provider_list: List[str] = []
+        gemini_image_at_cap = GEMINI_API_KEY and _daily_gemini_at_cap(is_image=True)
+        if GEMINI_API_KEY and not gemini_image_at_cap:
+            vision_provider_list.append("gemini")
+        if GROQ_API_KEY:
+            vision_provider_list.append("groq")
+        if gemini_image_at_cap:
+            logger.warning("gemini_image_cap_reached request_id=%s fallback_providers=%s", request_id, ",".join(vision_provider_list) or "none")
+        if not vision_provider_list:
+            raise HTTPException(status_code=429, detail=f"今日圖片分析已達每日上限（{GEMINI_DAILY_IMAGE_CAP} 次），UTC 00:00 重置。")
+        effective_provider_order = ",".join(vision_provider_list)
     else:
         base_order = req.provider_order or MODE_DEFAULT_PROVIDER_ORDER.get(req.response_mode, MODE_DEFAULT_PROVIDER_ORDER["fast"])
         with _STICKY_LOCK:
@@ -456,6 +572,14 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             effective_provider_order = ",".join(order_list)
         else:
             effective_provider_order = base_order
+        if _daily_gemini_at_cap(is_image=False):
+            order_list = [p.strip() for p in effective_provider_order.split(",") if p.strip()]
+            order_without_gemini = [p for p in order_list if p != "gemini"]
+            if order_list and not order_without_gemini:
+                logger.warning("gemini_chat_cap_reached request_id=%s fallback_providers=none", request_id)
+                raise HTTPException(status_code=429, detail=f"今日 Gemini 呼叫已達每日上限（{GEMINI_DAILY_CHAT_CAP} 次），UTC 00:00 重置。")
+            effective_provider_order = ",".join(order_without_gemini)
+            logger.warning("gemini_chat_cap_reached request_id=%s fallback_providers=%s", request_id, effective_provider_order or "none")
     mode_default_tokens = MODE_DEFAULT_MAX_TOKENS.get(req.response_mode, MODE_DEFAULT_MAX_TOKENS["fast"])
     effective_max_tokens = int(req.max_tokens or mode_default_tokens)
     if enforce_min_tokens:
@@ -464,7 +588,17 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
     if has_image:
         gemini_lock_acquired = _gemini_semaphore.acquire(blocking=True, timeout=10)
         if not gemini_lock_acquired:
+            logger.warning("gemini_semaphore_busy request_id=%s user_id=%s thread_id=%s", request_id, user_id, req.thread_id)
             raise HTTPException(status_code=503, detail="伺服器正忙，Gemini 圖片分析請求已達上限，請稍後再試。")
+    logger.info(
+        "chat_route request_id=%s user_id=%s thread_id=%s provider_order=%s max_tokens=%s history_turns=%s",
+        request_id,
+        user_id,
+        req.thread_id,
+        effective_provider_order or resolve_provider_order(),
+        effective_max_tokens,
+        req.history_turns,
+    )
     try:
         result = chat_once_detailed(
             memory=None,
@@ -498,6 +632,7 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             "web_search_provider": req.web_search_provider,
             "force_web_search": req.force_web_search,
         }
+        logger.exception("chat_exception request_id=%s context=%s error=%s", request_id, error_context, _exc_summary(exc))
         raise HTTPException(
             status_code=500,
             detail=f"{type(exc).__name__}: {exc}; context={error_context}",
@@ -507,13 +642,27 @@ def _chat_impl(req: ChatRequest, user_id: str, enforce_min_tokens: bool = True) 
             _gemini_semaphore.release()
     meta = result.get("meta", {}) if isinstance(result, dict) else {}
     successful_provider = meta.get("provider", "")
+    if successful_provider == "gemini":
+        _consume_daily_gemini(is_image=has_image)
+        logger.info("gemini_daily_usage_incremented request_id=%s is_image=%s", request_id, has_image)
     if successful_provider and not has_image:
         with _STICKY_LOCK:
             if len(_thread_sticky) >= _STICKY_MAX_THREADS:
                 _thread_sticky.clear()
             _thread_sticky[req.thread_id] = successful_provider
+    logger.info(
+        "chat_success request_id=%s user_id=%s thread_id=%s provider=%s model=%s latency_s=%s attempts=%s",
+        request_id,
+        user_id,
+        req.thread_id,
+        meta.get("provider"),
+        meta.get("model"),
+        meta.get("latency_s"),
+        meta.get("provider_attempts") or [],
+    )
     return ChatResponse(
         thread_id=req.thread_id,
+        request_id=None if request_id == "-" else request_id,
         reply=str(result.get("reply", "")) if isinstance(result, dict) else "",
         provider=meta.get("provider"),
         model=meta.get("model"),
@@ -688,7 +837,10 @@ def provider_models(
     x_user_id: Optional[str] = Header(default=None),
     x_session_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_auth(x_app_password, x_user_id, x_session_token)
+    # The UI currently authenticates every request with X-App-Password; keep the
+    # session-token header accepted for forward compatibility without treating it
+    # as the Request object positional argument.
+    require_auth(x_app_password, x_user_id)
     provider = provider.strip().lower()
     try:
         if provider == "fireworks":
